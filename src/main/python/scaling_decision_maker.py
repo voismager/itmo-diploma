@@ -55,55 +55,43 @@ class SLABasedScalingDecisionMaker(object):
 
 
 class ScalingDecisionMaker(object):
-    def __init__(self, window_size, c_1, c_2, c_3, scaling_delay):
-        self.window_size = window_size
+    def __init__(self, c_1, c_2, c_3, dur_up, dur_down):
         self.c_1 = c_1
         self.c_2 = c_2
         self.c_3 = c_3
-        self.dur_u = 0
-        self.timer_0 = 0
-
         self.tick_up_timer = 0
         self.tick_down_timer = 0
-        self.scaling_delay = scaling_delay
+        self.dur_up = int(dur_up)
+        self.dur_down = int(dur_down)
 
     def decide(self, history, predictions, prediction_delay, cluster):
         provisioned = provisioned_capacity_at(prediction_delay, cluster)
-        diff = math.ceil(sum(predictions) / 16) - provisioned
+        prediction = math.ceil(sum(predictions) / 16)
+        # diff = prediction - provisioned
 
-        if diff > 0:
-            cluster.scale_up(diff)
-        elif diff < 0:
-            diff = min(-diff, len(cluster.truly_active_workers()) - 1)
-            cluster.scale_down(diff)
+        # if diff > 0:
+        #     cluster.scale_up(diff)
+        # elif diff < 0:
+        #     diff = min(-diff, len(cluster.truly_active_workers()) - 1)
+        #     cluster.scale_down(diff)
 
-        # prediction = sum(predictions)
-        #
-        # if prediction > provisioned:
-        #     self.timer_0 += 0
-        #     if self.timer_0 > self.dur_u:
-        #         cluster
-        #
-        #
-        # if diff > self.c_1:
-        #     self.tick_up_timer = 0
-        #     self.tick_down_timer = 0
-        #     cluster.scale_up(math.ceil(diff / self.c_1))
-        # elif diff > self.c_2:
-        #     self.tick_down_timer = 0
-        #     self.tick_up_timer += 1
-        #     if self.tick_up_timer > self.scaling_delay:
-        #         cluster.scale_up(math.ceil(diff / self.c_2))
-        # elif diff < self.c_3:
-        #     self.tick_up_timer = 0
-        #     self.tick_down_timer += 1
-        #     if self.tick_down_timer > self.scaling_delay:
-        #         if diff > 0:
-        #             cluster.scale_down(math.ceil(self.c_3 / diff))
-        #         elif diff == 0:
-        #             cluster.scale_down(math.ceil(self.c_3))
-        #         else:
-        #             cluster.scale_down(min(math.ceil(self.c_3 - diff / self.c_3), self.c_1))
-        # else:
-        #     self.tick_up_timer = 0
-        #     self.tick_down_timer = 0
+        if prediction > provisioned * self.c_1:
+            self.tick_up_timer = 0
+            self.tick_down_timer = 0
+            cluster.scale_up(math.ceil(prediction - provisioned * self.c_1))
+
+        elif prediction > provisioned * self.c_2:
+            self.tick_down_timer = 0
+            self.tick_up_timer += 1
+            if self.tick_up_timer > self.dur_up:
+                cluster.scale_up(math.ceil(prediction - provisioned * self.c_2))
+
+        elif prediction < provisioned * self.c_3:
+            self.tick_up_timer = 0
+            self.tick_down_timer += 1
+            if self.tick_down_timer > self.dur_down:
+                cluster.scale_down(min(math.floor(provisioned * self.c_3 - prediction), len(cluster.truly_active_workers()) - 1))
+
+        else:
+            self.tick_up_timer = 0
+            self.tick_down_timer = 0

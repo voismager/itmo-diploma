@@ -1,8 +1,7 @@
 import csv
 
-import numpy as np
 from matplotlib.pyplot import plot, show, bar, legend, figure
-from scipy.optimize import differential_evolution
+from scipy.optimize import differential_evolution, LinearConstraint
 
 from cluster import QueueCluster
 from cost_metric import \
@@ -11,17 +10,9 @@ from cost_metric import \
     ScaleDownsCostMetric, \
     ScaleUpsCostMetric
 from load_metric import \
-    TotalRequiredLengthLoadMetric, \
-    TasksNumberLoadMetric, \
-    MedianWaitingTimeLoadMetric
+    TasksNumberLoadMetric
 from predictor import \
-    PrecisePredictor, \
-    LastValuePredictor, \
-    SimpleMovingAveragePredictor, \
-    WeighedMovingAveragePredictor, \
-    DoubleExponentialSmoothingPredictor, \
-    ArimaPredictor, \
-    TbatsPredictor
+    PrecisePredictor
 from scaling_decision_maker import ScalingDecisionMaker
 from task import TaskPool
 
@@ -29,9 +20,11 @@ SLA = 100
 
 
 class Statistics(object):
-    def __init__(self, cluster, task_pool):
+    def __init__(self, cluster, task_pool, start_predictor_after, worker_setup_delay):
         self.cluster = cluster
         self.task_pool = task_pool
+        self.start_predictor_after = start_predictor_after
+        self.worker_setup_delay = worker_setup_delay
         self.metric_history = []
         self.prediction_history = []
         self.stats = dict()
@@ -48,7 +41,17 @@ class Statistics(object):
         self.stats = stats
         self.ticks = ticks
 
-    def evaluate(self, start_predictor_after, worker_setup_delay):
+    def get_cost_metric_value(self):
+        sla_cost, _ = SLAWaitingTimeCostMetric(SLA, self.start_predictor_after + self.worker_setup_delay) \
+            .calculate(self.cluster, self.task_pool)
+
+        renting_cost = RentingCostMetric().calculate(self.cluster, self.task_pool)
+
+        cost = sla_cost * 0.3 + renting_cost * 0.7
+        print(f"Cost: {cost}")
+        return cost
+
+    def evaluate(self):
         metric_prediction_mae = 0
 
         for tick, prediction_value in self.prediction_history:
@@ -57,7 +60,8 @@ class Statistics(object):
 
         metric_prediction_mae = metric_prediction_mae / len(self.prediction_history)
 
-        sla_metric, top_waiting_time_tasks = SLAWaitingTimeCostMetric(SLA, start_predictor_after + worker_setup_delay).calculate(self.cluster, self.task_pool)
+        sla_metric, top_waiting_time_tasks = SLAWaitingTimeCostMetric(SLA, self.start_predictor_after + self.worker_setup_delay).calculate(self.cluster,
+                                                                                                                                           self.task_pool)
 
         results = {
             "Mean absolute error": metric_prediction_mae,
@@ -68,15 +72,15 @@ class Statistics(object):
             "Top waiting time tasks": top_waiting_time_tasks
         }
 
-        #for cost in results:
+        # for cost in results:
         #    print(f"{cost[0]}: {cost[1]}")
 
-        #costs_arr = np.asarray([cost[1] for cost in results])
-        #coefficients = np.asarray([1, 2, 100, 10])
+        # costs_arr = np.asarray([cost[1] for cost in results])
+        # coefficients = np.asarray([1, 2, 100, 10])
 
-        #total_cost = np.sum(costs_arr * coefficients)
-        #print(f"Total cost: {total_cost}")
-        #print()
+        # total_cost = np.sum(costs_arr * coefficients)
+        # print(f"Total cost: {total_cost}")
+        # print()
         return results
 
     def print(self, name):
@@ -110,7 +114,7 @@ def print_data(input_data):
     show()
 
 
-def run(input_data, predictor, start_predictor_after, worker_setup_delay):
+def run(input_data, predictor, scaling_decision_maker, start_predictor_after, worker_setup_delay):
     number_of_tasks_iter = iter(input_data)
     tasks_number_stat = input_data
 
@@ -120,9 +124,8 @@ def run(input_data, predictor, start_predictor_after, worker_setup_delay):
     cluster = QueueCluster(1, worker_setup_delay, 2)
     metric = TasksNumberLoadMetric()
     tick = 0
-    scaling_decision_maker = ScalingDecisionMaker(500, 100, 60, 10, 4)
 
-    statistics = Statistics(cluster, task_pool)
+    statistics = Statistics(cluster, task_pool, start_predictor_after, worker_setup_delay)
 
     while True:
         current_number_of_tasks = next(number_of_tasks_iter, -1)
@@ -157,22 +160,31 @@ def run(input_data, predictor, start_predictor_after, worker_setup_delay):
     return statistics
 
 
-def optimize_des_predictor(input_data):
+def optimize_scale_decision_maker(input_data):
     def run_based_on_data(x):
-        result_stats = run(input_data, DoubleExponentialSmoothingPredictor([1, 1, 2, 3, 5, 8, 13], x[0], x[1]))
-        return result_stats.evaluate()
+        c_1, c_2, c_3, dur_up, dur_down = x
 
-    print(differential_evolution(run_based_on_data, [(0, 1), (0, 1)]))
+        if c_1 > c_2 > c_3:
+            print("Input:", x)
+            result_stats = run(input_data, PrecisePredictor(input_data, 200, 5), ScalingDecisionMaker(c_1, c_2, c_3, dur_up, dur_down), 200, 100)
+            return result_stats.get_cost_metric_value()
+        else:
+            return 1e16
+
+    print(differential_evolution(
+        run_based_on_data,
+        [(0, 1), (0, 1), (0, 1), (1, 10), (1, 10)]
+    ))
 
 
 def run_visuals(input_data):
     predictors = [
         PrecisePredictor(input_data, 200, 5),
-        #LastValuePredictor(),
-        #SimpleMovingAveragePredictor(500),
-        #WeighedMovingAveragePredictor(500, "Fibonacci"),
-        #DoubleExponentialSmoothingPredictor(500, "Fibonacci", 0.9, 0.6),
-        #DoubleExponentialSmoothingPredictor(500, "Uniform", 0.2, 0.2)
+        LastValuePredictor(),
+        # SimpleMovingAveragePredictor(500),
+        # WeighedMovingAveragePredictor(500, "Fibonacci"),
+        # DoubleExponentialSmoothingPredictor(500, "Fibonacci", 0.9, 0.6),
+        # DoubleExponentialSmoothingPredictor(500, "Uniform", 0.2, 0.2)
     ]
 
     mean_absolute_error = dict()
@@ -182,9 +194,9 @@ def run_visuals(input_data):
     scale_downs = dict()
 
     for predictor in predictors:
-        stats = run(input_data, predictor, 200, 100)
+        stats = run(input_data, predictor, ScalingDecisionMaker(0.99545714, 0.99400752, 0.98420977, 2, 1), 200, 100)
         stats.print(predictor.name())
-        results = stats.evaluate(200, 100)
+        results = stats.evaluate()
 
         print("Mean absolute error:", results["Mean absolute error"])
         print(f"SLA violation total time ({SLA}s):", results[f"SLA violation total time ({SLA}s)"])
@@ -225,6 +237,6 @@ def run_visuals(input_data):
 
 if __name__ == '__main__':
     data = load_data()[10000:20000]
-    # print_data(data)
-    # optimize_des_predictor(data)
+    #print_data(data)
+    #optimize_scale_decision_maker(data)
     run_visuals(data)
