@@ -2,6 +2,7 @@ import math
 import statistics as st
 
 from cluster import QueueCluster
+from potential_tasks_counter import number_of_potential_tasks
 
 
 def median_absolute_deviation(input_data):
@@ -56,24 +57,23 @@ class SLABasedScalingDecisionMaker(object):
 
 class ScalingDecisionMaker(object):
     def __init__(self, c_1, c_2, c_3, dur_up, dur_down):
-        self.c_1 = c_1
-        self.c_2 = c_2
-        self.c_3 = c_3
-        self.tick_up_timer = 0
-        self.tick_down_timer = 0
+        self.c_1 = 1
+        self.c_2 = 1
+        self.c_3 = 1
+        self.tick_up_timer = 5
+        self.tick_down_timer = 5
         self.dur_up = int(dur_up)
         self.dur_down = int(dur_down)
 
-    def decide(self, history, predictions, prediction_delay, cluster):
-        provisioned = provisioned_capacity_at(prediction_delay, cluster)
-        prediction = math.ceil(sum(predictions) / 16)
-        # diff = prediction - provisioned
+    def decide(self, history_num_tasks, predictions, prediction_delay, cluster):
+        provisioned = number_of_potential_tasks(prediction_delay, cluster, ([5], [1.0]))
+        #print(provisioned)
+        #provisioned = provisioned_capacity_at(prediction_delay, cluster)
+        #print(provisioned)
+        #prediction = math.ceil(sum(predictions) / 16)
+        prediction = sum(predictions)
 
-        # if diff > 0:
-        #     cluster.scale_up(diff)
-        # elif diff < 0:
-        #     diff = min(-diff, len(cluster.truly_active_workers()) - 1)
-        #     cluster.scale_down(diff)
+        print(provisioned, prediction, len(cluster.active_workers))
 
         if prediction > provisioned * self.c_1:
             self.tick_up_timer = 0

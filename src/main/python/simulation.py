@@ -12,7 +12,10 @@ from cost_metric import \
 from load_metric import \
     TasksNumberLoadMetric
 from predictor import \
-    PrecisePredictor
+    PrecisePredictor, \
+    LastValuePredictor, \
+    WeighedMovingAveragePredictor, \
+    DoubleExponentialSmoothingPredictor
 from scaling_decision_maker import ScalingDecisionMaker
 from task import TaskPool
 
@@ -62,14 +65,16 @@ class Statistics(object):
 
         sla_metric, top_waiting_time_tasks = SLAWaitingTimeCostMetric(SLA, self.start_predictor_after + self.worker_setup_delay).calculate(self.cluster,
                                                                                                                                            self.task_pool)
+        renting_metric = RentingCostMetric().calculate(self.cluster, self.task_pool)
 
         results = {
             "Mean absolute error": metric_prediction_mae,
             f"SLA violation total time ({SLA}s)": sla_metric,
-            "Over-renting total time": RentingCostMetric().calculate(self.cluster, self.task_pool),
+            "Over-renting total time": renting_metric,
             "Total scale ups": ScaleUpsCostMetric().calculate(self.cluster, self.task_pool),
             "Total scale downs": ScaleDownsCostMetric().calculate(self.cluster, self.task_pool),
-            "Top waiting time tasks": top_waiting_time_tasks
+            "Top waiting time tasks": top_waiting_time_tasks,
+            "Final cost": renting_metric * 0.7 + sla_metric * 0.3
         }
 
         # for cost in results:
@@ -173,17 +178,18 @@ def optimize_scale_decision_maker(input_data):
 
     print(differential_evolution(
         run_based_on_data,
-        [(0, 1), (0, 1), (0, 1), (1, 10), (1, 10)]
+        [(0, 1), (0, 1), (0, 1), (1, 10), (1, 10)],
+        maxiter=3
     ))
 
 
 def run_visuals(input_data):
     predictors = [
         PrecisePredictor(input_data, 200, 5),
-        LastValuePredictor(),
-        # SimpleMovingAveragePredictor(500),
-        # WeighedMovingAveragePredictor(500, "Fibonacci"),
-        # DoubleExponentialSmoothingPredictor(500, "Fibonacci", 0.9, 0.6),
+        #LastValuePredictor(),
+        #SimpleMovingAveragePredictor(500),
+        #WeighedMovingAveragePredictor(500, "Fibonacci"),
+        #DoubleExponentialSmoothingPredictor(500, "Fibonacci", 0.9, 0.6),
         # DoubleExponentialSmoothingPredictor(500, "Uniform", 0.2, 0.2)
     ]
 
@@ -192,9 +198,10 @@ def run_visuals(input_data):
     over_renting_time = dict()
     scale_ups = dict()
     scale_downs = dict()
+    final_metric = dict()
 
     for predictor in predictors:
-        stats = run(input_data, predictor, ScalingDecisionMaker(0.99545714, 0.99400752, 0.98420977, 2, 1), 200, 100)
+        stats = run(input_data, predictor, ScalingDecisionMaker(1, 0.75, 1, 2, 1), 200, 100)
         stats.print(predictor.name())
         results = stats.evaluate()
 
@@ -208,6 +215,8 @@ def run_visuals(input_data):
         over_renting_time[predictor.short_name()] = results["Over-renting total time"]
         scale_ups[predictor.short_name()] = results["Total scale ups"]
         scale_downs[predictor.short_name()] = results["Total scale downs"]
+        final_metric[predictor.short_name()] = results["Final cost"]
+
 
     fig = figure()
     bar(mean_absolute_error.keys(), mean_absolute_error.values())
@@ -232,6 +241,11 @@ def run_visuals(input_data):
     fig = figure()
     bar(scale_downs.keys(), scale_downs.values())
     fig.suptitle("Total scale downs")
+    show()
+
+    fig = figure()
+    bar(final_metric.keys(), final_metric.values())
+    fig.suptitle("Final cost")
     show()
 
 

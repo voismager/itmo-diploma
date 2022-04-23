@@ -32,6 +32,19 @@ class Worker(object):
     def __eq__(self, other):
         return self.id == other.id
 
+    def get_copy(self):
+        worker = Worker(self.capacity, self.delay)
+        worker.state = self.state
+        worker.marked_to_stop = self.marked_to_stop
+        worker.id = self.id
+
+        if self.current_task is None:
+            worker.current_task = None
+        else:
+            worker.current_task = self.current_task.get_copy()
+
+        return worker
+
     def submit(self, task: Task):
         if self.state != RUNNING:
             raise Exception("Worker is not active!")

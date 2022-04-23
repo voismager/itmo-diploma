@@ -14,6 +14,12 @@ class Task(object):
     def decrease_length(self, by):
         self.left_length = max(0, self.left_length - by)
 
+    def get_copy(self):
+        task = Task(self.total_length, self.created_at)
+        task.left_length = self.left_length
+        task.waiting_time = self.waiting_time
+        return task
+
 
 class TaskPool(object):
     def __init__(self):
