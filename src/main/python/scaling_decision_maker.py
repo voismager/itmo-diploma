@@ -21,40 +21,6 @@ def provisioned_capacity_at(t, cluster: QueueCluster):
     return result
 
 
-class SLABasedScalingDecisionMaker(object):
-    def __init__(self, sla, scaling_delay):
-        self.sla = sla
-        self.scaling_delay = scaling_delay
-        self.tick_up_timer = 0
-        self.tick_down_timer = 0
-        self.c_1 = 0.75
-        self.c_2 = 0.5
-        self.c_3 = 0.2
-
-    def decide(self, predicted_median_sla, cluster: QueueCluster):
-        if predicted_median_sla > self.sla * self.c_1:
-            self.tick_up_timer = 0
-            self.tick_down_timer = 0
-            workers = int(predicted_median_sla / (self.sla * self.c_1))
-            cluster.scale_up(workers)
-
-        elif predicted_median_sla > self.sla * self.c_2:
-            self.tick_down_timer = 0
-            self.tick_up_timer += 1
-            if self.tick_up_timer > self.scaling_delay:
-                cluster.scale_up(1)
-
-        elif predicted_median_sla < self.sla * self.c_3:
-            self.tick_up_timer = 0
-            self.tick_down_timer += 1
-            if self.tick_down_timer > self.scaling_delay:
-                cluster.scale_down(1)
-
-        else:
-            self.tick_up_timer = 0
-            self.tick_down_timer = 0
-
-
 class ScalingDecisionMaker(object):
     def __init__(self, c_1, c_2, c_3, dur_up, dur_down):
         self.c_1 = 1
@@ -65,32 +31,29 @@ class ScalingDecisionMaker(object):
         self.dur_up = int(dur_up)
         self.dur_down = int(dur_down)
 
-    def decide(self, history_num_tasks, predictions, prediction_delay, cluster):
-        provisioned = number_of_potential_tasks(prediction_delay, cluster, ([5], [1.0]))
-        #print(provisioned)
-        #provisioned = provisioned_capacity_at(prediction_delay, cluster)
-        #print(provisioned)
-        #prediction = math.ceil(sum(predictions) / 16)
+    def decide(self, tasks_number_history, tasks_length_histogram, predictions, prediction_delay, cluster):
+        distr = tasks_length_histogram.as_distr()
+        provisioned = number_of_potential_tasks(prediction_delay, cluster, distr)
         prediction = sum(predictions)
 
-        print(provisioned, prediction, len(cluster.active_workers))
-
-        if prediction > provisioned * self.c_1:
+        if prediction > provisioned:
             self.tick_up_timer = 0
             self.tick_down_timer = 0
-            cluster.scale_up(math.ceil(prediction - provisioned * self.c_1))
+            workers = math.ceil((prediction - provisioned) * (tasks_length_histogram.median() / prediction_delay))
+            cluster.scale_up(workers)
 
-        elif prediction > provisioned * self.c_2:
-            self.tick_down_timer = 0
-            self.tick_up_timer += 1
-            if self.tick_up_timer > self.dur_up:
-                cluster.scale_up(math.ceil(prediction - provisioned * self.c_2))
-
-        elif prediction < provisioned * self.c_3:
+        elif prediction < provisioned:
             self.tick_up_timer = 0
             self.tick_down_timer += 1
             if self.tick_down_timer > self.dur_down:
-                cluster.scale_down(min(math.floor(provisioned * self.c_3 - prediction), len(cluster.truly_active_workers()) - 1))
+                workers = math.ceil((provisioned - prediction) * (tasks_length_histogram.median() / prediction_delay))
+                cluster.scale_down(min(workers, len(cluster.truly_active_workers()) - 1))
+
+        # elif prediction > provisioned * self.c_2:
+        #     self.tick_down_timer = 0
+        #     self.tick_up_timer += 1
+        #     if self.tick_up_timer > self.dur_up:
+        #         cluster.scale_up(prediction - provisioned)
 
         else:
             self.tick_up_timer = 0

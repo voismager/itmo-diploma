@@ -4,105 +4,17 @@ from matplotlib.pyplot import plot, show, bar, legend, figure
 from scipy.optimize import differential_evolution, LinearConstraint
 
 from cluster import QueueCluster
-from cost_metric import \
-    SLAWaitingTimeCostMetric, \
-    RentingCostMetric, \
-    ScaleDownsCostMetric, \
-    ScaleUpsCostMetric
-from load_metric import \
-    TasksNumberLoadMetric
+from sim_statistics import Statistics
 from predictor import \
     PrecisePredictor, \
     LastValuePredictor, \
+    SimpleMovingAveragePredictor, \
     WeighedMovingAveragePredictor, \
     DoubleExponentialSmoothingPredictor
 from scaling_decision_maker import ScalingDecisionMaker
 from task import TaskPool
 
 SLA = 100
-
-
-class Statistics(object):
-    def __init__(self, cluster, task_pool, start_predictor_after, worker_setup_delay):
-        self.cluster = cluster
-        self.task_pool = task_pool
-        self.start_predictor_after = start_predictor_after
-        self.worker_setup_delay = worker_setup_delay
-        self.metric_history = []
-        self.prediction_history = []
-        self.stats = dict()
-        self.ticks = None
-
-    def add_metric(self, metric_value):
-        self.metric_history.append(metric_value)
-
-    def add_prediction(self, start_tick, predictions):
-        for tick in range(start_tick, start_tick + len(predictions)):
-            self.prediction_history.append((tick, predictions[tick - start_tick]))
-
-    def set_other_stats(self, stats, ticks):
-        self.stats = stats
-        self.ticks = ticks
-
-    def get_cost_metric_value(self):
-        sla_cost, _ = SLAWaitingTimeCostMetric(SLA, self.start_predictor_after + self.worker_setup_delay) \
-            .calculate(self.cluster, self.task_pool)
-
-        renting_cost = RentingCostMetric().calculate(self.cluster, self.task_pool)
-
-        cost = sla_cost * 0.3 + renting_cost * 0.7
-        print(f"Cost: {cost}")
-        return cost
-
-    def evaluate(self):
-        metric_prediction_mae = 0
-
-        for tick, prediction_value in self.prediction_history:
-            if tick < len(self.metric_history):
-                metric_prediction_mae += abs(prediction_value - self.metric_history[tick])
-
-        metric_prediction_mae = metric_prediction_mae / len(self.prediction_history)
-
-        sla_metric, top_waiting_time_tasks = SLAWaitingTimeCostMetric(SLA, self.start_predictor_after + self.worker_setup_delay).calculate(self.cluster,
-                                                                                                                                           self.task_pool)
-        renting_metric = RentingCostMetric().calculate(self.cluster, self.task_pool)
-
-        results = {
-            "Mean absolute error": metric_prediction_mae,
-            f"SLA violation total time ({SLA}s)": sla_metric,
-            "Over-renting total time": renting_metric,
-            "Total scale ups": ScaleUpsCostMetric().calculate(self.cluster, self.task_pool),
-            "Total scale downs": ScaleDownsCostMetric().calculate(self.cluster, self.task_pool),
-            "Top waiting time tasks": top_waiting_time_tasks,
-            "Final cost": renting_metric * 0.7 + sla_metric * 0.3
-        }
-
-        # for cost in results:
-        #    print(f"{cost[0]}: {cost[1]}")
-
-        # costs_arr = np.asarray([cost[1] for cost in results])
-        # coefficients = np.asarray([1, 2, 100, 10])
-
-        # total_cost = np.sum(costs_arr * coefficients)
-        # print(f"Total cost: {total_cost}")
-        # print()
-        return results
-
-    def print(self, name):
-        ticks_list = list(range(self.ticks))
-
-        # plot(ticks_list, self.stats['queue_size'], label='Queue Size')
-        # plot(ticks_list, stats['number_of_tasks'], label='Number of Tasks')
-        # legend()
-        # show()
-
-        fig = figure()
-        plot(ticks_list, self.metric_history, label='Metric Value')
-        plot([p[0] for p in self.prediction_history], [p[1] for p in self.prediction_history], label='Prediction Value')
-        plot(ticks_list, self.stats['workers_number'], label='Workers Num.')
-        fig.suptitle(name)
-        legend()
-        show()
 
 
 def load_data():
@@ -127,10 +39,9 @@ def run(input_data, predictor, scaling_decision_maker, start_predictor_after, wo
     task_length = 5
     task_pool = TaskPool()
     cluster = QueueCluster(1, worker_setup_delay, 2)
-    metric = TasksNumberLoadMetric()
     tick = 0
 
-    statistics = Statistics(cluster, task_pool, start_predictor_after, worker_setup_delay)
+    statistics = Statistics(cluster, task_pool, start_predictor_after, worker_setup_delay, SLA)
 
     while True:
         current_number_of_tasks = next(number_of_tasks_iter, -1)
@@ -139,19 +50,19 @@ def run(input_data, predictor, scaling_decision_maker, start_predictor_after, wo
             if task_pool.all_tasks_are_finished():
                 break
             else:
-                statistics.add_metric(metric.calculate(cluster, task_pool, []))
+                statistics.add_tasks_metric([])
                 tasks_number_stat.append(0)
         else:
             tasks = [task_pool.create_task(task_length, tick) for _ in range(current_number_of_tasks)]
             cluster.submit(tasks)
-            statistics.add_metric(metric.calculate(cluster, task_pool, tasks))
+            statistics.add_tasks_metric(tasks)
 
         cluster.on_tick(tick)
 
         if tick % scale_decision_each_t == 0 and tick >= start_predictor_after:
-            predictions = predictor.get_prediction(statistics.metric_history, t=scale_decision_each_t)
+            predictions = predictor.get_prediction(statistics.tasks_number_history, t=scale_decision_each_t)
             statistics.add_prediction(tick, predictions)
-            scaling_decision_maker.decide(statistics.metric_history, predictions, scale_decision_each_t, cluster)
+            scaling_decision_maker.decide(statistics.tasks_number_history, statistics.tasks_length_histogram, predictions, scale_decision_each_t, cluster)
 
         task_pool.update()
 
