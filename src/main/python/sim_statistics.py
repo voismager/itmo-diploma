@@ -1,12 +1,25 @@
 import math
 
-from matplotlib.pyplot import plot, show, bar, legend, figure
+from matplotlib.pyplot import plot, show, legend, figure
+from sklearn.metrics import r2_score, mean_absolute_error, max_error
 
 from cost_metric import \
     SLAWaitingTimeCostMetric, \
     RentingCostMetric, \
     ScaleDownsCostMetric, \
     ScaleUpsCostMetric
+
+
+def mae(actual, predicted):
+    return mean_absolute_error(actual, predicted)
+
+
+def max_err(actual, predicted):
+    return max_error(actual, predicted)
+
+
+def corr(actual, predicted):
+    return r2_score(actual, predicted)
 
 
 class Histogram(object):
@@ -98,51 +111,38 @@ class Statistics(object):
         return cost
 
     def evaluate(self):
-        metric_prediction_mae = 0
+        start = self.prediction_history[0][0]
+        actual = self.tasks_number_history[start:start + len(self.prediction_history)]
+        prediction = [p[1] for p in self.prediction_history[:len(actual)]]
 
-        for tick, prediction_value in self.prediction_history:
-            if tick < len(self.tasks_number_history):
-                metric_prediction_mae += abs(prediction_value - self.tasks_number_history[tick])
+        metric_corr = corr(actual, prediction)
+        metric_mae = mae(actual, prediction)
+        metric_max_err = max_err(actual, prediction)
 
-        metric_prediction_mae = metric_prediction_mae / len(self.prediction_history)
-
-        sla_metric, top_waiting_time_tasks = SLAWaitingTimeCostMetric(self.sla, self.start_predictor_after + self.worker_setup_delay).calculate(self.cluster,
-                                                                                                                                                self.task_pool)
-        renting_metric = RentingCostMetric().calculate(self.cluster, self.task_pool)
+        metric_sla, top_waiting_time_tasks = SLAWaitingTimeCostMetric(self.sla, self.start_predictor_after + self.worker_setup_delay).calculate(self.cluster,                                                                                                                      self.task_pool)
+        metric_rent = RentingCostMetric().calculate(self.cluster, self.task_pool)
 
         results = {
-            "Mean absolute error": metric_prediction_mae,
-            f"SLA violation total time ({self.sla}s)": sla_metric,
-            "Over-renting total time": renting_metric,
-            "Total scale ups": ScaleUpsCostMetric().calculate(self.cluster, self.task_pool),
-            "Total scale downs": ScaleDownsCostMetric().calculate(self.cluster, self.task_pool),
-            "Top waiting time tasks": top_waiting_time_tasks,
-            "Final cost": renting_metric * 0.7 + sla_metric * 0.3
+            "Mean absolute error": metric_mae,
+            "Coefficient of determination": metric_corr,
+            "Max error": metric_max_err,
+            f"SLA violation total time ({self.sla}s)": metric_sla,
+            "Over-renting total time": metric_rent,
+            #"Total scale ups": ScaleUpsCostMetric().calculate(self.cluster, self.task_pool),
+            #"Total scale downs": ScaleDownsCostMetric().calculate(self.cluster, self.task_pool),
+            # "Top waiting time tasks": top_waiting_time_tasks,
+            "Final cost": metric_rent * 0.7 + metric_sla * 0.3
         }
 
-        # for cost in results:
-        #    print(f"{cost[0]}: {cost[1]}")
-
-        # costs_arr = np.asarray([cost[1] for cost in results])
-        # coefficients = np.asarray([1, 2, 100, 10])
-
-        # total_cost = np.sum(costs_arr * coefficients)
-        # print(f"Total cost: {total_cost}")
-        # print()
         return results
 
     def print(self, name):
         ticks_list = list(range(self.ticks))
 
-        # plot(ticks_list, self.stats['queue_size'], label='Queue Size')
-        # plot(ticks_list, stats['number_of_tasks'], label='Number of Tasks')
-        # legend()
-        # show()
-
         fig = figure()
         plot(ticks_list, self.tasks_number_history, label='Metric Value')
         plot([p[0] for p in self.prediction_history], [p[1] for p in self.prediction_history], label='Prediction Value')
-        plot(ticks_list, self.stats['workers_number'], label='Workers Num.')
+        #plot(ticks_list, self.stats['workers_number'], label='Workers Num.')
         fig.suptitle(name)
         legend()
         show()

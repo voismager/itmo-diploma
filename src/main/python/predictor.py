@@ -1,4 +1,3 @@
-from statsmodels.tsa.arima.model import ARIMA
 import pmdarima as pm
 from tbats import BATS, TBATS
 
@@ -158,17 +157,6 @@ class DoubleExponentialSmoothingPredictor(Predictor):
             result.append(next_prediction)
 
         return result
-
-
-class ArimaPredictor(Predictor):
-    def __init__(self, window):
-        self.window = window
-
-    def get_prediction(self, history, t=1):
-        window = history[-self.window:]
-        model = ARIMA(window, order=(5, 1, 0))
-        model_fit = model.fit()
-        return model_fit.forecast(n_periods=t)
 
 
 class TbatsPredictor(Predictor):

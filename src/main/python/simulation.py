@@ -1,8 +1,19 @@
 import csv
 
-from matplotlib.pyplot import plot, show, bar, legend, figure
-from scipy.optimize import differential_evolution, LinearConstraint
+import numpy as np
+from matplotlib.pyplot import plot, show, bar, figure
+from scipy.optimize import differential_evolution
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.seasonal import STL
+from sktime.transformations.series.detrend import Detrender, Deseasonalizer
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import adfuller
 
+from statsmodels.tsa.filters.bk_filter import bkfilter
+from statsmodels.tsa.filters.hp_filter import hpfilter
+from statsmodels.tsa.filters.cf_filter import cffilter
+
+from scipy import fftpack
 from cluster import QueueCluster
 from sim_statistics import Statistics
 from predictor import \
@@ -11,6 +22,11 @@ from predictor import \
     SimpleMovingAveragePredictor, \
     WeighedMovingAveragePredictor, \
     DoubleExponentialSmoothingPredictor
+from python.predictors.custom_predictor import CustomPredictor, CustomPredictor1, CustomPredictor2, CustomPredictor3
+from python.predictors.tbats_predictor import TbatsPredictor
+from python.predictors.arima_predictor import ArimaPredictor
+from python.predictors.composite_predictor import CompositePredictor
+from python.predictors.random_forest_predictor import RandomForestPredictor, NeuralPredictor
 from scaling_decision_maker import ScalingDecisionMaker
 from task import TaskPool
 
@@ -27,7 +43,47 @@ def load_data():
 
 
 def print_data(input_data):
-    plot(list(range(len(input_data))), input_data, label="Data")
+    X = list(range(len(input_data)))
+
+    #from sktime.utils.seasonality import autocorrelation_seasonality_test
+    #import pandas as pd
+
+    #print(autocorrelation_seasonality_test(pd.Series(input_data), 1250))
+    #result = seasonal_decompose(input_data, period=1250)
+
+    #cycle, trend = cffilter(input_data, low=1200, high=1500, drift=False)
+
+    sig_fft = fftpack.fft(input_data)
+    power = np.abs(sig_fft)**2
+
+    sample_freq = fftpack.fftfreq(len(input_data), d=len(input_data))
+
+    pos_mask = np.where(sample_freq > 0)
+    freqs = sample_freq[pos_mask]
+    peak_freq = freqs[power[pos_mask].argmax()]
+
+    high_freq_fft = sig_fft.copy()
+    high_freq_fft[np.abs(sample_freq) > peak_freq] = 0
+    filtered_sig = fftpack.ifft(high_freq_fft)
+
+    plot(X, input_data)
+    plot(X, filtered_sig)
+    #plot(X, input_data - filtered_sig)
+
+    # The second value is the p-value.
+    # If this p-value is smaller than 0.05
+    # you can reject the null hypothesis (reject non-stationarity)
+    # and accept the alternative hypothesis (stationarity).
+    # adf, pval, usedlag, nobs, crit_vals, icbest = adfuller(input_data)
+    # print('ADF test statistic:', adf)
+    # print('ADF p-values:', pval)
+    # print('ADF number of lags used:', usedlag)
+    # print('ADF number of observations:', nobs)
+    # print('ADF critical values:', crit_vals)
+    # print('ADF best information criterion:', icbest)
+    #
+    # plot_acf(np.asarray(input_data), lags=100)
+    # plot_pacf(np.asarray(input_data), lags=50)
     show()
 
 
@@ -38,7 +94,7 @@ def run(input_data, predictor, scaling_decision_maker, start_predictor_after, wo
     scale_decision_each_t = worker_setup_delay
     task_length = 5
     task_pool = TaskPool()
-    cluster = QueueCluster(1, worker_setup_delay, 2)
+    cluster = QueueCluster(1, worker_setup_delay, 200)
     tick = 0
 
     statistics = Statistics(cluster, task_pool, start_predictor_after, worker_setup_delay, SLA)
@@ -94,74 +150,46 @@ def optimize_scale_decision_maker(input_data):
     ))
 
 
-def run_visuals(input_data):
+def run_visuals(train_data, test_data):
     predictors = [
-        PrecisePredictor(input_data, 200, 5),
+        #ArimaPredictor(),
+        #NeuralPredictor(),
+        CustomPredictor3(100, train_data),
+        #CustomPredictor(100),
+        #TbatsPredictor(train_data),
+        #RandomForestPredictor(),
         #LastValuePredictor(),
-        #SimpleMovingAveragePredictor(500),
-        #WeighedMovingAveragePredictor(500, "Fibonacci"),
-        #DoubleExponentialSmoothingPredictor(500, "Fibonacci", 0.9, 0.6),
+        # SimpleMovingAveragePredictor(500),
+        WeighedMovingAveragePredictor(500, "Fibonacci"),
+        #PrecisePredictor(input_data, 200, 5),
+        # WeighedMovingAveragePredictor(500, "Fibonacci"),
+        # DoubleExponentialSmoothingPredictor(500, "Fibonacci", 0.9, 0.6),
         # DoubleExponentialSmoothingPredictor(500, "Uniform", 0.2, 0.2)
     ]
 
-    mean_absolute_error = dict()
-    sla_violation_time = dict()
-    over_renting_time = dict()
-    scale_ups = dict()
-    scale_downs = dict()
-    final_metric = dict()
+    metrics = dict()
 
     for predictor in predictors:
-        stats = run(input_data, predictor, ScalingDecisionMaker(1, 0.75, 1, 2, 1), 200, 100)
+        stats = run(test_data, predictor, ScalingDecisionMaker(1, 0.75, 1, 2, 1), 200, 100)
         stats.print(predictor.name())
         results = stats.evaluate()
 
-        print("Mean absolute error:", results["Mean absolute error"])
-        print(f"SLA violation total time ({SLA}s):", results[f"SLA violation total time ({SLA}s)"])
-        print("Over-renting total time", results["Over-renting total time"])
-        print("Top waiting time tasks: ", [t.waiting_time for t in results["Top waiting time tasks"]])
+        for k, v in results.items():
+            if k not in metrics:
+                metrics[k] = dict()
 
-        mean_absolute_error[predictor.short_name()] = results["Mean absolute error"]
-        sla_violation_time[predictor.short_name()] = results[f"SLA violation total time ({SLA}s)"]
-        over_renting_time[predictor.short_name()] = results["Over-renting total time"]
-        scale_ups[predictor.short_name()] = results["Total scale ups"]
-        scale_downs[predictor.short_name()] = results["Total scale downs"]
-        final_metric[predictor.short_name()] = results["Final cost"]
+            metrics[k][predictor.short_name()] = v
 
-
-    fig = figure()
-    bar(mean_absolute_error.keys(), mean_absolute_error.values())
-    fig.suptitle("Mean absolute error")
-    show()
-
-    fig = figure()
-    bar(sla_violation_time.keys(), sla_violation_time.values())
-    fig.suptitle(f"SLA violation total time ({SLA}s)")
-    show()
-
-    fig = figure()
-    bar(over_renting_time.keys(), over_renting_time.values())
-    fig.suptitle("Over-renting total time")
-    show()
-
-    fig = figure()
-    bar(scale_ups.keys(), scale_ups.values())
-    fig.suptitle("Total scale ups")
-    show()
-
-    fig = figure()
-    bar(scale_downs.keys(), scale_downs.values())
-    fig.suptitle("Total scale downs")
-    show()
-
-    fig = figure()
-    bar(final_metric.keys(), final_metric.values())
-    fig.suptitle("Final cost")
-    show()
+    for name, metric in metrics.items():
+        fig = figure()
+        bar(metric.keys(), metric.values())
+        fig.suptitle(name)
+        show()
 
 
 if __name__ == '__main__':
-    data = load_data()[10000:20000]
-    #print_data(data)
-    #optimize_scale_decision_maker(data)
-    run_visuals(data)
+    data = load_data()
+    train = data[5000:30000]
+    test = data[30000:40000]
+    #print_data(data[10000:])
+    run_visuals(train, test)
