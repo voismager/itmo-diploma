@@ -22,7 +22,9 @@ from predictor import \
     SimpleMovingAveragePredictor, \
     WeighedMovingAveragePredictor, \
     DoubleExponentialSmoothingPredictor
-from python.predictors.custom_predictor import CustomPredictor, CustomPredictor1, CustomPredictor2, CustomPredictor3
+from python.predictors.custom_predictor import CustomPredictor, CustomPredictor1, CustomPredictor2
+from python.predictors.nbits_predictor import NbitsPredictor
+from python.predictors.my_predictor import MyPredictor
 from python.predictors.tbats_predictor import TbatsPredictor
 from python.predictors.arima_predictor import ArimaPredictor
 from python.predictors.composite_predictor import CompositePredictor
@@ -45,6 +47,9 @@ def load_data():
 def print_data(input_data):
     X = list(range(len(input_data)))
 
+    plot(X, input_data, "bo", markersize=1)
+    show()
+
     #from sktime.utils.seasonality import autocorrelation_seasonality_test
     #import pandas as pd
 
@@ -53,21 +58,21 @@ def print_data(input_data):
 
     #cycle, trend = cffilter(input_data, low=1200, high=1500, drift=False)
 
-    sig_fft = fftpack.fft(input_data)
-    power = np.abs(sig_fft)**2
+    #sig_fft = fftpack.fft(input_data)
+    #power = np.abs(sig_fft)**2
 
-    sample_freq = fftpack.fftfreq(len(input_data), d=len(input_data))
-
-    pos_mask = np.where(sample_freq > 0)
-    freqs = sample_freq[pos_mask]
-    peak_freq = freqs[power[pos_mask].argmax()]
-
-    high_freq_fft = sig_fft.copy()
-    high_freq_fft[np.abs(sample_freq) > peak_freq] = 0
-    filtered_sig = fftpack.ifft(high_freq_fft)
-
-    plot(X, input_data)
-    plot(X, filtered_sig)
+    # sample_freq = fftpack.fftfreq(len(input_data), d=len(input_data))
+    #
+    # pos_mask = np.where(sample_freq > 0)
+    # freqs = sample_freq[pos_mask]
+    # peak_freq = freqs[power[pos_mask].argmax()]
+    #
+    # high_freq_fft = sig_fft.copy()
+    # high_freq_fft[np.abs(sample_freq) > peak_freq] = 0
+    # filtered_sig = fftpack.ifft(high_freq_fft)
+    #
+    # plot(X, input_data)
+    # plot(X, filtered_sig)
     #plot(X, input_data - filtered_sig)
 
     # The second value is the p-value.
@@ -154,7 +159,8 @@ def run_visuals(train_data, test_data):
     predictors = [
         #ArimaPredictor(),
         #NeuralPredictor(),
-        CustomPredictor3(100, train_data),
+        MyPredictor(train_data),
+        #NbitsPredictor(100, train_data),
         #CustomPredictor(100),
         #TbatsPredictor(train_data),
         #RandomForestPredictor(),
@@ -170,7 +176,7 @@ def run_visuals(train_data, test_data):
     metrics = dict()
 
     for predictor in predictors:
-        stats = run(test_data, predictor, ScalingDecisionMaker(1, 0.75, 1, 2, 1), 200, 100)
+        stats = run(test_data, predictor, ScalingDecisionMaker(1, 0.75, 1, 2, 1), 2048, 100)
         stats.print(predictor.name())
         results = stats.evaluate()
 
@@ -189,7 +195,7 @@ def run_visuals(train_data, test_data):
 
 if __name__ == '__main__':
     data = load_data()
-    train = data[5000:30000]
-    test = data[30000:40000]
-    #print_data(data[10000:])
+    train = data[0:35000]
+    test = data[35000:44000]
+    #print_data(data[10000:12000])
     run_visuals(train, test)

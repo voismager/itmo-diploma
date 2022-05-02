@@ -20,9 +20,21 @@ def __convert_to_matrix__(arr, look_back):
         np.array(y).reshape((len(y), 1, 1))
 
 
+def load_data():
+    import csv
+
+    with open("data.csv", "r") as f:
+        reader = csv.reader(f)
+        rows = []
+        for line in reader:
+            rows.append(int(line[0]))
+        return rows
+
+
 if __name__ == '__main__':
-    data = np.arange(0, 10).reshape((1, 10, 1))
-    print(data)
+    data = load_data()
+    plot(data[4000:4500])
+    show()
 
     # num_samples, time_steps, input_dim, output_dim = 10, 5, 1, 1
     # x = np.random.uniform(size=(num_samples, time_steps, 1))
