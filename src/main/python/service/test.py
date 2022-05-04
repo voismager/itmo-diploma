@@ -9,7 +9,7 @@ import requests
 import numpy as np
 import darts
 
-from matplotlib.pyplot import plot, show, bar, figure
+from matplotlib.pyplot import plot, show, bar, figure, hist
 
 base_url = "http://127.0.0.1:5000"
 
@@ -53,6 +53,20 @@ def create_engine(delay, freq):
     return response.json()["id"]
 
 
+def get_stats(engine_id):
+    response = requests.get(base_url + "/engines/" + engine_id + "/stats")
+    body = response.json()
+
+    predicted_tasks_plot = Plot("Predicted Tasks")
+
+    for prediction in body["prediction_history"]:
+        date = ciso8601.parse_datetime(prediction["date"])
+        value = prediction["value"]
+        predicted_tasks_plot.add(date, value)
+
+    return predicted_tasks_plot, body["task_distribution"]
+
+
 def get_scaling_decision(engine_id, threads, history, current_time):
     # Prepare data to send
     history_to_send = {}
@@ -83,22 +97,25 @@ def get_scaling_decision(engine_id, threads, history, current_time):
 
     # Cleanup history
     history = {task_id: task for (task_id, task) in history.items() if task.get("finished_at") is None}
-    return response.json()["scaling_decision"], history
+    body = response.json()
+    return history, body["scaling_decision"], body["predicted_tasks_number"]["values"]
 
 
-def run_test():
-    tasks_numbers = load_data("../data.csv")
+def random_task_length():
+    x = np.random.normal(loc=4000, scale=1500)
+    if x < 0:
+        return random_task_length()
+    else:
+        return x
 
-    setup_delay_ms = 100000
+
+def run_test(tasks_numbers, setup_delay_ms, freq_ms):
     ms_from_last_decision = 0
-    freq_ms = 2000
-
-    engine_id = create_engine(setup_delay_ms, freq_ms)
 
     threads = []
     queue = []
     history = {}
-    now = datetime.datetime.now()
+    current_time = datetime.datetime.now()
     tick = 0
 
     for _ in range(100):
@@ -109,8 +126,6 @@ def run_test():
     active_threads_plot = Plot("Active Threads")
 
     while True:
-        current_time = now + datetime.timedelta(milliseconds=tick * freq_ms)
-
         if tick % 1000 == 0:
             print(f"tick={tick}, time={current_time}, queue={len(queue)}, threads={len(threads)}")
 
@@ -120,16 +135,18 @@ def run_test():
             thread["time_left_ms"] = time_left_ms
 
             if thread["active"]:
-                if time_left_ms == 0 and len(queue) > 0:
-                    task = queue.pop(0)
-                    history[task["id"]]["started_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
-
+                if time_left_ms == 0:
                     if thread.get("task_id") is not None:
-                        old_task_id = thread.get("task_id")
-                        history[old_task_id]["finished_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                        finished_task_id = thread["task_id"]
+                        history[finished_task_id]["finished_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                        thread["task_id"] = None
 
-                    thread["time_left_ms"] = task["length_ms"]
-                    thread["task_id"] = task["id"]
+                    if len(queue) > 0:
+                        task = queue.pop(0)
+                        task_id = task["id"]
+                        thread["time_left_ms"] = task["length_ms"]
+                        thread["task_id"] = task["id"]
+                        history[task_id]["started_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
             else:
                 if time_left_ms == 0:
                     thread["active"] = True
@@ -137,7 +154,7 @@ def run_test():
         if tick < len(tasks_numbers):
             tasks_number = tasks_numbers[tick]
             for _ in range(tasks_number):
-                length_ms = np.random.normal(loc=4000, scale=100)
+                length_ms = random_task_length()
                 task = {
                     "id": str(uuid.uuid4()),
                     "arrived_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -145,7 +162,7 @@ def run_test():
                 }
 
                 queue.append(task)
-                history[task["id"]] = task
+                history[task["id"]] = dict(task)
 
             tasks_plot.add(current_time, tasks_number)
         else:
@@ -153,25 +170,53 @@ def run_test():
             if len(queue) == 0:
                 break
 
-        if ms_from_last_decision > setup_delay_ms:
+        if ms_from_last_decision >= setup_delay_ms:
             ms_from_last_decision = 0
-            decision, history = get_scaling_decision(engine_id, threads, history, current_time)
+            history, decision, predictions = get_scaling_decision(engine_id, threads, history, current_time)
 
             if decision["action"] == "scale_up":
                 for _ in range(decision["threads"]):
                     threads.append({"time_left_ms": setup_delay_ms, "task_id": None, "active": False})
+            elif decision["action"] == "scale_down":
+                number_of_threads_to_shut_down = min(decision["threads"], len(threads))
+                threads.sort(key=lambda thr: thr["time_left_ms"] * int(thr["active"]))
+                threads_to_shut_down = threads[:number_of_threads_to_shut_down]
+                for thread in threads_to_shut_down:
+                    if thread["active"] and thread.get("task_id") is not None:
+                        finished_task_id = thread["task_id"]
+                        history[finished_task_id]["finished_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                        thread["task_id"] = None
+
+                threads = threads[number_of_threads_to_shut_down:]
 
         active_threads_plot.add(current_time, len([thr for thr in threads if thr["active"]]))
         all_threads_plot.add(current_time, len(threads))
         tick += 1
+        current_time = current_time + datetime.timedelta(milliseconds=freq_ms)
         ms_from_last_decision += freq_ms
 
     return tasks_plot, active_threads_plot, all_threads_plot
 
 
 if __name__ == '__main__':
-    tasks_plot, active_threads_plot, all_threads_plot = run_test()
+    tasks_numbers = load_data("../data.csv")[:5000]
+    setup_delay_ms = 100000
+    freq_ms = 2000
+
+    engine_id = create_engine(setup_delay_ms, freq_ms)
+    print(f"Engine id: {engine_id}")
+
+    tasks_plot, active_threads_plot, all_threads_plot = run_test(tasks_numbers, setup_delay_ms, freq_ms)
+    predicted_tasks_plot, task_distribution = get_stats(engine_id)
+
+    print(task_distribution)
+    bar(task_distribution["values"], task_distribution["weights"], width=1000)
+    show()
+
+    tasks_plot.to_time_series().plot()
+    predicted_tasks_plot.to_time_series().plot()
+    show()
+
     active_threads_plot.to_time_series().plot()
     all_threads_plot.to_time_series().plot()
-    tasks_plot.to_time_series().plot()
     show()

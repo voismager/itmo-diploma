@@ -126,6 +126,10 @@ class TasksHistory:
             return self.history.end_time().to_pydatetime()
 
     def update(self, tasks_history, last_timestamp):
+        if len(tasks_history) == 0:
+            self.__add__(last_timestamp, [])
+            return
+
         tasks_history.sort(key=lambda group: ciso8601.parse_datetime(group["arrived_at"]))
 
         for task_group in tasks_history:
@@ -163,7 +167,6 @@ class TasksHistory:
                     )
                     self.history = self.history.append(history)
 
-
         for task in tasks:
             task_id = task.get("id")
             started_at = task.get("started_at")
@@ -197,7 +200,18 @@ class PredictiveScalingEngine:
         self.horizon_steps = __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms)
         self.predictor = MainPredictor(512, self.horizon_steps)
         self.history = TasksHistory(measurement_frequency_ms, task_length_order)
+        self.prediction_history = None
         self.params = params
+
+    def __update_prediction_history__(self, predictions: TimeSeries):
+        if self.prediction_history is None:
+            self.prediction_history = predictions
+        else:
+            end_time = self.prediction_history.end_time().to_pydatetime()
+            start_time = predictions.start_time().to_pydatetime()
+
+            if start_time > end_time:
+                self.prediction_history = self.prediction_history.append(predictions)
 
     def __get_number_of_needed_threads__(self, active_threads, predictions, now: datetime.datetime):
         # Init some params
@@ -278,6 +292,8 @@ class PredictiveScalingEngine:
         predictions = predictions.map(lambda p: np.around(p).clip(min=0))
         predictions_values = predictions.values().reshape(-1).astype(int)
 
+        self.__update_prediction_history__(predictions)
+
         threads = self.__get_number_of_needed_threads__(
             active_threads, predictions_values,
             self.history.last_datetime()
@@ -307,7 +323,7 @@ class PredictiveScalingEngine:
                 "message": message,
                 "values": [
                     {"date": t[0], "value": t[1]}
-                    for t in zip(predictions_series.index.tolist(), predictions_series.tolist())
+                    for t in zip(predictions_series.index.strftime("%Y-%m-%d %H:%M:%S").tolist(), predictions_series.tolist())
                 ]
             },
             "scaling_decision": decision
@@ -316,12 +332,17 @@ class PredictiveScalingEngine:
     def get_stats(self):
         distribution = self.history.task_lengths_histogram.as_distribution()
         history = self.history.history.pd_series()
+        prediction_history = self.prediction_history.pd_series()
 
         return {
             "task_distribution": {
                 "values": distribution[0],
                 "weights": distribution[1]
             },
+            "prediction_history": [
+                {"date": t[0], "value": t[1]}
+                for t in zip(prediction_history.index.strftime("%Y-%m-%d %H:%M:%S").tolist(), prediction_history.tolist())
+            ],
             "history": [
                 {"date": t[0], "value": t[1]}
                 for t in zip(history.index.tolist(), history.tolist())
