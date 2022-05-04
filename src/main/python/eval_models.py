@@ -23,11 +23,11 @@ def eval_model(train, val, model):
 
 if __name__ == '__main__':
     data = TimeSeries.from_values(np.array(load_data()))
-    train = data[0:35000]
-    val = data[35000:44000]
+    train = data[0:40000]
+    val = data[40000:40010]
 
     eval_model(train, val, ExponentialSmoothing())
-    eval_model(train, val, AutoARIMA())
+    #eval_model(train, val, AutoARIMA())
     eval_model(train, val, Theta(season_mode=SeasonalityMode.ADDITIVE))
     eval_model(train, val, FourTheta(theta=4, season_mode=SeasonalityMode.ADDITIVE))
 

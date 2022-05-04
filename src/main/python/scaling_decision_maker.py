@@ -32,7 +32,7 @@ class ScalingDecisionMaker(object):
         self.dur_down = int(dur_down)
 
     def decide(self, tasks_number_history, tasks_length_histogram, predictions, prediction_delay, cluster):
-        distr = tasks_length_histogram.as_distr()
+        distr = tasks_length_histogram.as_distribution()
         provisioned = number_of_potential_tasks(prediction_delay, cluster, distr)
         prediction = sum(predictions)
 
