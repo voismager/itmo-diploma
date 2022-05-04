@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, abort
 
-from scalingservice import ScalingService
+from scaling_service import ScalingService
 
 api = Flask(__name__)
 service = ScalingService()
@@ -21,18 +21,15 @@ def create_scaling_engine():
         "id": engine.id,
         "worker_setup_delay_ms": engine.worker_setup_delay_ms,
         "measurement_frequency_ms": engine.measurement_frequency_ms,
-        "task_length_distribution_interval_ms": engine.task_lengths_histogram.interval_length,
+        "task_length_distribution_interval_ms": engine.history.task_lengths_histogram.interval_length,
         "params": engine.params
     })
 
 
-@api.route('/engines/<engine_id>/distribution', methods=['GET'])
-def get_task_length_distribution(engine_id):
-    distribution = service.get_task_length_distribution(engine_id)
-    return jsonify({
-        "values": distribution[0],
-        "weights": distribution[1]
-    })
+@api.route('/engines/<engine_id>/stats', methods=['GET'])
+def get_stats(engine_id):
+    stats = service.get_stats(engine_id)
+    return jsonify(stats)
 
 
 @api.route('/engines/<engine_id>/scaling', methods=['POST'])
@@ -42,7 +39,8 @@ def get_scaling_decision(engine_id):
         return jsonify(service.get_scaling_decision(
             engine_id,
             content["active_threads"],
-            content["tasks_history"]
+            content["tasks_history"],
+            content["last_timestamp"]
         ))
 
     except KeyError:

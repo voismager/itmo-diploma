@@ -7,7 +7,7 @@ import ciso8601
 from darts import TimeSeries
 import datetime
 
-from python.theta_predictor import ThetaPredictor
+from python.service.main_predictor import MainPredictor
 
 request_example = {
     "active_threads": [
@@ -19,10 +19,7 @@ request_example = {
             "processing_time_passed_ms": 20
         }
     ],
-    "queue": [
-        {"arrived_at": "2022-07-04 12:59:58"},
-        {"arrived_at": "2022-07-04 12:59:59"}
-    ],
+    "last_timestamp": "2022-07-04 14:59:58",
     "tasks_history": [
         {
             "arrived_at": "2022-07-04 12:59:58",
@@ -115,7 +112,8 @@ def __strip_distribution__(distribution, low_value):
 
 class TasksHistory:
     def __init__(self, measurement_frequency_ms, task_length_order):
-        self.measurement_frequency = f"{measurement_frequency_ms}ms"
+        self.measurement_frequency_ms = measurement_frequency_ms
+        self.measurement_frequency_literal = f"{measurement_frequency_ms}ms"
         self.history = None
         self.current_queue = {}
         self.processed_task_ids_by_histogram = set()
@@ -127,17 +125,44 @@ class TasksHistory:
         else:
             return self.history.end_time().to_pydatetime()
 
-    def add(self, arrived_at, tasks):
+    def update(self, tasks_history, last_timestamp):
+        tasks_history.sort(key=lambda group: ciso8601.parse_datetime(group["arrived_at"]))
+
+        for task_group in tasks_history:
+            arrived_at = task_group["arrived_at"]
+            tasks = task_group["tasks"]
+            self.__add__(arrived_at, tasks)
+
+        last_arrived_at_ts = ciso8601.parse_datetime(tasks_history[-1]["arrived_at"])
+        last_timestamp_ts = ciso8601.parse_datetime(last_timestamp)
+        if last_timestamp_ts > last_arrived_at_ts:
+            self.__add__(last_timestamp, [])
+
+    def __add__(self, arrived_at, tasks):
         if self.history is None:
             index = pd.DatetimeIndex([arrived_at])
-            history = TimeSeries.from_series(pd.Series([len(tasks)], index=index), freq=self.measurement_frequency)
+            history = TimeSeries.from_series(pd.Series([len(tasks)], index=index), freq=self.measurement_frequency_literal)
             self.history = history
         else:
-            arrived_at_ts = pd.Timestamp.fromisoformat(arrived_at)
-            if arrived_at_ts > self.history.end_time():
-                index = pd.DatetimeIndex([arrived_at])
-                history = TimeSeries.from_series(pd.Series([len(tasks)], index=index), freq=self.measurement_frequency)
-                self.history = self.history.append(history)
+            arrived_at_ts = ciso8601.parse_datetime(arrived_at)
+
+            if arrived_at_ts > self.history.end_time().to_pydatetime():
+                next_ts = self.history.end_time().to_pydatetime() + datetime.timedelta(milliseconds=self.measurement_frequency_ms)
+
+                if next_ts == arrived_at_ts:
+                    index = pd.DatetimeIndex([arrived_at])
+                    history = TimeSeries.from_series(pd.Series([len(tasks)], index=index), freq=self.measurement_frequency_literal)
+                    self.history = self.history.append(history)
+                else:
+                    index = pd.DatetimeIndex([next_ts, arrived_at])
+                    history = TimeSeries.from_series(
+                        pd.Series([0, len(tasks)], index=index),
+                        freq=self.measurement_frequency_literal,
+                        fill_missing_dates=True,
+                        fillna_value=0
+                    )
+                    self.history = self.history.append(history)
+
 
         for task in tasks:
             task_id = task.get("id")
@@ -170,15 +195,9 @@ class PredictiveScalingEngine:
         self.worker_setup_delay_ms = worker_setup_delay_ms
         self.measurement_frequency_ms = measurement_frequency_ms
         self.horizon_steps = __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms)
-        self.predictor = ThetaPredictor(512, self.horizon_steps)
+        self.predictor = MainPredictor(512, self.horizon_steps)
         self.history = TasksHistory(measurement_frequency_ms, task_length_order)
         self.params = params
-
-    def __update_history__(self, tasks_history):
-        for task_group in tasks_history:
-            arrived_at = task_group["arrived_at"]
-            tasks = task_group["tasks"]
-            self.history.add(arrived_at, tasks)
 
     def __get_number_of_needed_threads__(self, active_threads, predictions, now: datetime.datetime):
         # Init some params
@@ -252,11 +271,12 @@ class PredictiveScalingEngine:
 
         return created_threads - min_idle_threads
 
-    def get_scaling_decision(self, active_threads, tasks_history):
-        self.__update_history__(tasks_history)
+    def get_scaling_decision(self, active_threads, tasks_history, last_timestamp):
+        self.history.update(tasks_history, last_timestamp)
 
-        predictions = self.predictor.predict(self.history.history).map(lambda p: np.around(p).clip(min=0).astype(int))
-        predictions_values = predictions.values().reshape(-1)
+        predictions, message = self.predictor.predict(self.history.history)
+        predictions = predictions.map(lambda p: np.around(p).clip(min=0))
+        predictions_values = predictions.values().reshape(-1).astype(int)
 
         threads = self.__get_number_of_needed_threads__(
             active_threads, predictions_values,
@@ -272,7 +292,7 @@ class PredictiveScalingEngine:
         elif threads < 0:
             decision = {
                 "action": "scale_down",
-                "threads": threads
+                "threads": -threads
             }
 
         else:
@@ -284,6 +304,7 @@ class PredictiveScalingEngine:
 
         return {
             "predicted_tasks_number": {
+                "message": message,
                 "values": [
                     {"date": t[0], "value": t[1]}
                     for t in zip(predictions_series.index.tolist(), predictions_series.tolist())
@@ -292,8 +313,21 @@ class PredictiveScalingEngine:
             "scaling_decision": decision
         }
 
-    def get_task_length_distribution(self):
-        return self.history.task_lengths_histogram.as_distribution()
+    def get_stats(self):
+        distribution = self.history.task_lengths_histogram.as_distribution()
+        history = self.history.history.pd_series()
+
+        return {
+            "task_distribution": {
+                "values": distribution[0],
+                "weights": distribution[1]
+            },
+            "history": [
+                {"date": t[0], "value": t[1]}
+                for t in zip(history.index.tolist(), history.tolist())
+            ],
+            "queue": self.history.current_queue
+        }
 
 # def __get_number_of_potential_assigned_tasks__(self, queue_length, active_threads):
 #     result = 0

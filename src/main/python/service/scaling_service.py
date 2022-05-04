@@ -31,18 +31,18 @@ class ScalingService:
         self.engines[engine_id] = engine
         return engine
 
-    def get_scaling_decision(self, engine_id, active_threads, tasks_history):
+    def get_scaling_decision(self, engine_id, active_threads, tasks_history, last_timestamp):
         engine = self.engines.get(engine_id)
 
         if engine is None:
             raise KeyError("Engine with specified id is not found!")
 
-        return engine.get_scaling_decision(active_threads, tasks_history)
+        return engine.get_scaling_decision(active_threads, tasks_history, last_timestamp)
 
-    def get_task_length_distribution(self, engine_id):
+    def get_stats(self, engine_id):
         engine = self.engines.get(engine_id)
 
         if engine is None:
             raise KeyError("Engine with specified id is not found!")
 
-        return engine.get_task_length_distribution()
+        return engine.get_stats()
