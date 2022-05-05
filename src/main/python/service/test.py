@@ -14,6 +14,32 @@ from matplotlib.pyplot import plot, show, bar, figure, hist
 base_url = "http://127.0.0.1:5000"
 
 
+class SLACounter:
+    def __init__(self, threshold_ms):
+        self.threshold_ms = threshold_ms
+        self.sum = 0
+        self.min = 1e10
+        self.max = 0
+        self.count = 0
+
+    def add(self, task):
+        arrived_at = ciso8601.parse_datetime(task["arrived_at"])
+        started_at = ciso8601.parse_datetime(task["started_at"])
+        delta_ms = (started_at - arrived_at).total_seconds() * 1000
+
+        if delta_ms > self.threshold_ms:
+            self.sum += (delta_ms - self.threshold_ms)
+            self.max = max((delta_ms - self.threshold_ms), self.max)
+            self.min = min((delta_ms - self.threshold_ms), self.min)
+
+        self.count += 1
+
+    def do_print(self):
+        print(f"Max SLA violation time (s): {self.max / 1000}")
+        print(f"Min SLA violation time (s): {self.min / 1000}")
+        print(f"Average SLA violation time (s): {self.sum / self.count / 1000}")
+
+
 class Plot:
     def __init__(self, name):
         self.name = name
@@ -42,12 +68,12 @@ def load_data(path):
         return rows
 
 
-def create_engine(delay, freq):
+def create_engine(delay, freq, sla):
     response = requests.post(base_url + "/engines", json={
         "worker_setup_delay_ms": delay,
         "measurement_frequency_ms": freq,
         "task_length_order": "S",
-        "params": {"sla_ms": 10000}
+        "params": {"sla_threshold_ms": sla}
     })
 
     return response.json()["id"]
@@ -109,7 +135,7 @@ def random_task_length():
         return x
 
 
-def run_test(tasks_numbers, setup_delay_ms, freq_ms):
+def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
     ms_from_last_decision = 0
 
     threads = []
@@ -124,6 +150,7 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms):
     tasks_plot = Plot("Tasks")
     all_threads_plot = Plot("All Threads")
     active_threads_plot = Plot("Active Threads")
+    sla_counter = SLACounter(sla_threshold_ms)
 
     while True:
         if tick % 1000 == 0:
@@ -147,6 +174,7 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms):
                         thread["time_left_ms"] = task["length_ms"]
                         thread["task_id"] = task["id"]
                         history[task_id]["started_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                        sla_counter.add(history[task_id])
             else:
                 if time_left_ms == 0:
                     thread["active"] = True
@@ -195,21 +223,23 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms):
         current_time = current_time + datetime.timedelta(milliseconds=freq_ms)
         ms_from_last_decision += freq_ms
 
-    return tasks_plot, active_threads_plot, all_threads_plot
+    return tasks_plot, active_threads_plot, all_threads_plot, sla_counter
 
 
 if __name__ == '__main__':
     tasks_numbers = load_data("../data.csv")[:5000]
     setup_delay_ms = 100000
     freq_ms = 2000
+    sla_threshold_ms = 10000
 
-    engine_id = create_engine(setup_delay_ms, freq_ms)
+    engine_id = create_engine(setup_delay_ms, freq_ms, sla_threshold_ms)
     print(f"Engine id: {engine_id}")
 
-    tasks_plot, active_threads_plot, all_threads_plot = run_test(tasks_numbers, setup_delay_ms, freq_ms)
+    tasks_plot, active_threads_plot, all_threads_plot, sla_counter = run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms)
     predicted_tasks_plot, task_distribution = get_stats(engine_id)
 
-    print(task_distribution)
+    sla_counter.do_print()
+
     bar(task_distribution["values"], task_distribution["weights"], width=1000)
     show()
 

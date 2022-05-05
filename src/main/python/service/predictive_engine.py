@@ -218,7 +218,7 @@ class PredictiveScalingEngine:
         created_threads = 0
         min_idle_threads = 1e6
 
-        sla_ms = self.params["sla_ms"]
+        sla_threshold_ms = self.params["sla_threshold_ms"]
         task_lengths_distribution = self.history.task_lengths_histogram.as_distribution()
 
         # Setup simulation
@@ -244,7 +244,7 @@ class PredictiveScalingEngine:
             arrived_at_ts = task["arrived_at"]
             delta_ms = int((current_time - arrived_at_ts).total_seconds() * 1000)
 
-            if delta_ms >= sla_ms:
+            if delta_ms >= sla_threshold_ms:
                 # If task already violates SLA, create a new thread
                 idle_thread = next((thr for thr in simulated_threads if thr["time_left_ms"] == 0), None)
                 if idle_thread is not None:

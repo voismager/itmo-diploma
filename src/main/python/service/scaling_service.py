@@ -11,7 +11,7 @@ class ScalingService:
             worker_setup_delay_ms=100000,
             measurement_frequency_ms=2000,
             task_length_order="S",
-            params={"sla_ms": 10000}
+            params={"sla_threshold_ms": 10000}
         )
 
     def create_engine(self, worker_setup_delay_ms, measurement_frequency_ms, task_length_order, params):
