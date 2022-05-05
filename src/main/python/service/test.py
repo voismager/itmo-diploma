@@ -73,7 +73,12 @@ def create_engine(delay, freq, sla):
         "worker_setup_delay_ms": delay,
         "measurement_frequency_ms": freq,
         "task_length_order": "S",
-        "params": {"sla_threshold_ms": sla}
+        "params": {
+            "sla_threshold_ms": sla,
+            "sla_cost_per_ms": 60000,
+            "rent_cost_per_ms": 1,
+            "max_threads": 3000
+        }
     })
 
     return response.json()["id"]
@@ -138,6 +143,7 @@ def random_task_length():
 def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
     ms_from_last_decision = 0
 
+    decision_period_ms = setup_delay_ms * 2
     threads = []
     queue = []
     history = {}
@@ -198,7 +204,7 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
             if len(queue) == 0:
                 break
 
-        if ms_from_last_decision >= setup_delay_ms:
+        if ms_from_last_decision >= decision_period_ms:
             ms_from_last_decision = 0
             history, decision, predictions = get_scaling_decision(engine_id, threads, history, current_time)
 
@@ -230,7 +236,7 @@ if __name__ == '__main__':
     tasks_numbers = load_data("../data.csv")[:5000]
     setup_delay_ms = 100000
     freq_ms = 2000
-    sla_threshold_ms = 10000
+    sla_threshold_ms = 200000
 
     engine_id = create_engine(setup_delay_ms, freq_ms, sla_threshold_ms)
     print(f"Engine id: {engine_id}")
