@@ -12,6 +12,7 @@ def create_scaling_engine():
 
     engine = service.create_engine(
         content["worker_setup_delay_ms"],
+        content["delta_ms"],
         content["measurement_frequency_ms"],
         content["task_length_order"],
         content["params"]

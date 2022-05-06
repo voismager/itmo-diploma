@@ -222,11 +222,10 @@ class PredictiveScalingEngine:
     def __init__(self, engine_id, worker_setup_delay_ms, delta_ms, measurement_frequency_ms, task_length_order, params):
         self.id = engine_id
         self.measurement_frequency_ms = measurement_frequency_ms
-        self.horizon_steps = __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms)
-        self.horizon_steps_with_delta = self.horizon_steps * 2
-        self.delta = self.horizon_steps
-        self.predictor = MainPredictor(512, self.horizon_steps)
-        self.predictor_with_delta = MainPredictor(512, self.horizon_steps * 2)
+        self.setup_horizon_steps = __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms)
+        self.delta_horizon_steps = __get_horizon_steps__(delta_ms, measurement_frequency_ms)
+        self.total_horizon_steps = self.setup_horizon_steps + self.delta_horizon_steps
+        self.predictor = MainPredictor(512, self.total_horizon_steps)
         self.history = TasksHistory(measurement_frequency_ms, task_length_order)
         self.decision_history = DecisionHistory(params["max_threads"])
         self.prediction_history = None
@@ -287,7 +286,7 @@ class PredictiveScalingEngine:
 
         # What happens if we do nothing
         if threads_number == 0:
-            for tick in range(self.horizon_steps_with_delta):
+            for tick in range(self.total_horizon_steps):
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
                 # Add predicted number of tasks
@@ -306,7 +305,7 @@ class PredictiveScalingEngine:
                     thr["time_left_ms"] = time_left_ms
 
             # Calculate total threads working time during this period
-            total_time_working_ms = len(active_threads) * self.horizon_steps_with_delta * self.measurement_frequency_ms
+            total_time_working_ms = len(active_threads) * self.total_horizon_steps * self.measurement_frequency_ms
 
             return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
 
@@ -315,11 +314,11 @@ class PredictiveScalingEngine:
         elif threads_number > 0:
             old_threads_number = len(active_threads)
 
-            for tick in range(self.horizon_steps_with_delta):
+            for tick in range(self.total_horizon_steps):
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
                 # When delay passes, add new threads
-                if tick == (self.horizon_steps - 1):
+                if tick == (self.setup_horizon_steps - 1):
                     active_threads = active_threads + [{"time_left_ms": 0} for _ in range(threads_number)]
 
                 # Add predicted number of tasks
@@ -338,8 +337,8 @@ class PredictiveScalingEngine:
                     thr["time_left_ms"] = time_left_ms
 
             # Calculate total threads working time during this period
-            old_threads_total_time_working_ms = old_threads_number * self.horizon_steps_with_delta * self.measurement_frequency_ms
-            new_threads_total_time_working_ms = threads_number * self.delta * self.measurement_frequency_ms
+            old_threads_total_time_working_ms = old_threads_number * self.total_horizon_steps * self.measurement_frequency_ms
+            new_threads_total_time_working_ms = threads_number * self.delta_horizon_steps * self.measurement_frequency_ms
             total_time_working_ms = old_threads_total_time_working_ms + new_threads_total_time_working_ms
 
             return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
@@ -360,7 +359,7 @@ class PredictiveScalingEngine:
             # Hold refs to all threads
             all_threads = [thr for thr in active_threads]
 
-            for tick in range(self.horizon_steps_with_delta):
+            for tick in range(self.total_horizon_steps):
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
                 # Add predicted number of tasks
@@ -391,7 +390,7 @@ class PredictiveScalingEngine:
                     time_working_ms = (destroyed_at - start_time).total_seconds() * 1000
                     total_time_working_ms += time_working_ms
                 else:
-                    total_time_working_ms += (self.horizon_steps_with_delta * self.measurement_frequency_ms)
+                    total_time_working_ms += (self.total_horizon_steps * self.measurement_frequency_ms)
 
             return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
 
@@ -470,7 +469,7 @@ class PredictiveScalingEngine:
         #     self.history.last_datetime()
         # )
 
-        predictions, message = self.predictor_with_delta.predict(self.history.history)
+        predictions, message = self.predictor.predict(self.history.history)
         predictions = predictions.map(lambda p: np.around(p).clip(min=0))
         predictions_values = predictions.values().reshape(-1).astype(int)
         self.__update_prediction_history__(predictions)

@@ -94,10 +94,10 @@ def load_data(path):
         return rows
 
 
-def create_engine(delay, freq, sla):
+def create_engine(delay, delta, freq, sla):
     response = requests.post(base_url + "/engines", json={
         "worker_setup_delay_ms": delay,
-        "delta_ms": delay,
+        "delta_ms": delta,
         "measurement_frequency_ms": freq,
         "task_length_order": "S",
         "params": {
@@ -171,10 +171,10 @@ def random_id():
     return str(uuid.uuid4())
 
 
-def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
+def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms):
     ms_from_last_decision = 0
 
-    decision_period_ms = setup_delay_ms * 2
+    decision_period_ms = setup_delay_ms + delta_ms
     threads = []
     queue = []
     history = {}
@@ -276,19 +276,20 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
 if __name__ == '__main__':
     tasks_numbers = load_data("../data.csv")[:5000]
     setup_delay_ms = 100000
+    delta_ms = 50000
     freq_ms = 2000
     sla_threshold_ms = 200000
 
-    engine_id = create_engine(setup_delay_ms, freq_ms, sla_threshold_ms)
+    engine_id = create_engine(setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms)
     print(f"Engine id: {engine_id}")
 
-    tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter = run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms)
+    tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter = run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms)
     predicted_tasks_plot, task_distribution, decision_history = get_stats(engine_id)
 
     sla_counter.do_print()
     rent_counter.do_print()
 
-    plot_history_dict(decision_history, freq=f"{100000*2}ms")
+    plot_history_dict(decision_history, freq=f"{setup_delay_ms + delta_ms}ms")
     show()
 
     bar(task_distribution["values"], task_distribution["weights"], width=1000)
