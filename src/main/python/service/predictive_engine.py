@@ -11,6 +11,7 @@ from scipy.optimize import minimize_scalar
 
 from main_predictor import MainPredictor
 from decision_history import DecisionHistory
+from simulation_cache import SimulationCache
 
 request_example = {
     "active_threads": [
@@ -268,7 +269,7 @@ class PredictiveScalingEngine:
     def __calculate_local_future_cost__(
             self, threads_number,
             predictions_with_delta, active_threads, task_queue,
-            current_time: datetime.datetime, generator: TaskLengthGenerator) -> float:
+            current_time: datetime.datetime, generator: TaskLengthGenerator, cache: SimulationCache) -> float:
 
         assigned_tasks = []
 
@@ -314,11 +315,20 @@ class PredictiveScalingEngine:
         elif threads_number > 0:
             old_threads_number = len(active_threads)
 
-            for tick in range(self.total_horizon_steps):
+            if cache.empty():
+                tick_range = range(self.total_horizon_steps)
+            else:
+                tick_range = range(self.setup_horizon_steps - 1, self.total_horizon_steps)
+                active_threads, task_queue = cache.get()
+
+            for tick in tick_range:
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
                 # When delay passes, add new threads
                 if tick == (self.setup_horizon_steps - 1):
+                    if cache.empty():
+                        cache.put(active_threads, task_queue)
+
                     active_threads = active_threads + [{"time_left_ms": 0} for _ in range(threads_number)]
 
                 # Add predicted number of tasks
@@ -412,7 +422,7 @@ class PredictiveScalingEngine:
             for task in self.history.current_queue.values()
         ], key=lambda task: task["arrived_at"])
 
-        def run_simulation(threads):
+        def run_simulation(threads, cache):
             nonlocal simulated_threads, simulated_tasks_queue, predictions_with_delta, current_time, task_lengths_distribution
             simulated_threads_copy = [dict(thr) for thr in simulated_threads]
             simulated_tasks_queue_copy = [dict(task) for task in simulated_tasks_queue]
@@ -422,7 +432,8 @@ class PredictiveScalingEngine:
                 active_threads=simulated_threads_copy,
                 task_queue=simulated_tasks_queue_copy,
                 current_time=current_time,
-                generator=TaskLengthGenerator(task_lengths_distribution, 1)
+                generator=TaskLengthGenerator(task_lengths_distribution, 1),
+                cache=cache
             )
 
         optimal_threads = self.__optimize_cost_function__(run_simulation, len(active_threads))
@@ -430,7 +441,8 @@ class PredictiveScalingEngine:
         return optimal_threads
 
     def __optimize_cost_function__(self, run_simulation, current_threads):
-        min_cost = run_simulation(0)
+        cache = SimulationCache()
+        min_cost = run_simulation(0, cache)
 
         if min_cost == 0:
             return 0
@@ -446,7 +458,7 @@ class PredictiveScalingEngine:
                 if threads in results:
                     return results[threads]
                 else:
-                    cost = run_simulation(threads)
+                    cost = run_simulation(threads, cache)
                     print(f"Threads={threads}, Cost={cost}")
                     results[threads] = cost
                     return cost

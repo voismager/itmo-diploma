@@ -94,23 +94,6 @@ def load_data(path):
         return rows
 
 
-def create_engine(delay, delta, freq, sla):
-    response = requests.post(base_url + "/engines", json={
-        "worker_setup_delay_ms": delay,
-        "delta_ms": delta,
-        "measurement_frequency_ms": freq,
-        "task_length_order": "S",
-        "params": {
-            "sla_threshold_ms": sla,
-            "sla_cost_per_ms": 1000,
-            "rent_cost_per_ms": 1,
-            "max_threads": 3000
-        }
-    })
-
-    return response.json()["id"]
-
-
 def get_stats(engine_id):
     response = requests.get(base_url + "/engines/" + engine_id + "/stats")
     body = response.json()
@@ -171,7 +154,24 @@ def random_id():
     return str(uuid.uuid4())
 
 
-def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms):
+def create_engine(delay, delta, freq, sla, sla_cost):
+    response = requests.post(base_url + "/engines", json={
+        "worker_setup_delay_ms": delay,
+        "delta_ms": delta,
+        "measurement_frequency_ms": freq,
+        "task_length_order": "S",
+        "params": {
+            "sla_threshold_ms": sla,
+            "sla_cost_per_ms": sla_cost,
+            "rent_cost_per_ms": 1,
+            "max_threads": 3000
+        }
+    })
+
+    return response.json()["id"]
+
+
+def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost):
     ms_from_last_decision = 0
 
     decision_period_ms = setup_delay_ms + delta_ms
@@ -184,7 +184,7 @@ def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms)
     tasks_plot = Plot("Tasks")
     all_threads_plot = Plot("All Threads")
     active_threads_plot = Plot("Active Threads")
-    sla_counter = SLACounter(sla_threshold_ms, 60000)
+    sla_counter = SLACounter(sla_threshold_ms, sla_cost)
     rent_counter = RentCounter(1)
 
     for _ in range(100):
@@ -279,11 +279,15 @@ if __name__ == '__main__':
     delta_ms = 50000
     freq_ms = 2000
     sla_threshold_ms = 200000
+    sla_cost = 1000
 
-    engine_id = create_engine(setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms)
+    engine_id = create_engine(setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost)
     print(f"Engine id: {engine_id}")
 
-    tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter = run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms)
+    tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter = run_test(
+        tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost
+    )
+
     predicted_tasks_plot, task_distribution, decision_history = get_stats(engine_id)
 
     sla_counter.do_print()
