@@ -9,14 +9,39 @@ import requests
 import numpy as np
 import darts
 
+from decision_history import plot_history_dict
 from matplotlib.pyplot import plot, show, bar, figure, hist
 
 base_url = "http://127.0.0.1:5000"
 
 
+class RentCounter:
+    def __init__(self, cost_per_ms):
+        self.cost_per_ms = cost_per_ms
+        self.threads = {}
+
+    def on_thread_started(self, thread, time):
+        self.threads[thread["id"]] = {"started": time}
+
+    def on_thread_stopped(self, thread, time):
+        self.threads[thread["id"]]["stopped"] = time
+
+    def do_print(self):
+        total_rent_ms = 0
+        for thr in self.threads.values():
+            started = thr["started"]
+            stopped = thr["stopped"]
+            delta_ms = (stopped - started).total_seconds() * 1000
+            total_rent_ms += delta_ms
+
+        print(f"Total rent (s): {total_rent_ms / 1000}")
+        print(f"Total rent cost: {total_rent_ms * self.cost_per_ms}")
+
+
 class SLACounter:
-    def __init__(self, threshold_ms):
+    def __init__(self, threshold_ms, cost_per_ms):
         self.threshold_ms = threshold_ms
+        self.cost_per_ms = cost_per_ms
         self.sum = 0
         self.min = 1e10
         self.max = 0
@@ -38,6 +63,7 @@ class SLACounter:
         print(f"Max SLA violation time (s): {self.max / 1000}")
         print(f"Min SLA violation time (s): {self.min / 1000}")
         print(f"Average SLA violation time (s): {self.sum / self.count / 1000}")
+        print(f"Total SLA cost: {self.sum * self.cost_per_ms}")
 
 
 class Plot:
@@ -71,11 +97,12 @@ def load_data(path):
 def create_engine(delay, freq, sla):
     response = requests.post(base_url + "/engines", json={
         "worker_setup_delay_ms": delay,
+        "delta_ms": delay,
         "measurement_frequency_ms": freq,
         "task_length_order": "S",
         "params": {
             "sla_threshold_ms": sla,
-            "sla_cost_per_ms": 60000,
+            "sla_cost_per_ms": 1000,
             "rent_cost_per_ms": 1,
             "max_threads": 3000
         }
@@ -95,7 +122,7 @@ def get_stats(engine_id):
         value = prediction["value"]
         predicted_tasks_plot.add(date, value)
 
-    return predicted_tasks_plot, body["task_distribution"]
+    return predicted_tasks_plot, body["task_distribution"], body["decision_history"]
 
 
 def get_scaling_decision(engine_id, threads, history, current_time):
@@ -140,6 +167,10 @@ def random_task_length():
         return x
 
 
+def random_id():
+    return str(uuid.uuid4())
+
+
 def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
     ms_from_last_decision = 0
 
@@ -150,13 +181,16 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
     current_time = datetime.datetime.now()
     tick = 0
 
-    for _ in range(100):
-        threads.append({"time_left_ms": 0, "task_id": None, "active": True})
-
     tasks_plot = Plot("Tasks")
     all_threads_plot = Plot("All Threads")
     active_threads_plot = Plot("Active Threads")
-    sla_counter = SLACounter(sla_threshold_ms)
+    sla_counter = SLACounter(sla_threshold_ms, 60000)
+    rent_counter = RentCounter(1)
+
+    for _ in range(100):
+        thread = {"time_left_ms": 0, "task_id": None, "active": True, "id": random_id()}
+        threads.append(thread)
+        rent_counter.on_thread_started(thread, current_time)
 
     while True:
         if tick % 1000 == 0:
@@ -184,6 +218,8 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
             else:
                 if time_left_ms == 0:
                     thread["active"] = True
+                    thread["id"] = random_id()
+                    rent_counter.on_thread_started(thread, current_time)
 
         if tick < len(tasks_numbers):
             tasks_number = tasks_numbers[tick]
@@ -202,6 +238,9 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
         else:
             tasks_plot.add(current_time, 0)
             if len(queue) == 0:
+                for thread in threads:
+                    if thread["active"]:
+                        rent_counter.on_thread_stopped(thread, current_time)
                 break
 
         if ms_from_last_decision >= decision_period_ms:
@@ -216,10 +255,12 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
                 threads.sort(key=lambda thr: thr["time_left_ms"] * int(thr["active"]))
                 threads_to_shut_down = threads[:number_of_threads_to_shut_down]
                 for thread in threads_to_shut_down:
-                    if thread["active"] and thread.get("task_id") is not None:
-                        finished_task_id = thread["task_id"]
-                        history[finished_task_id]["finished_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
-                        thread["task_id"] = None
+                    if thread["active"]:
+                        rent_counter.on_thread_stopped(thread, current_time)
+                        if thread.get("task_id") is not None:
+                            finished_task_id = thread["task_id"]
+                            history[finished_task_id]["finished_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                            thread["task_id"] = None
 
                 threads = threads[number_of_threads_to_shut_down:]
 
@@ -229,7 +270,7 @@ def run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms):
         current_time = current_time + datetime.timedelta(milliseconds=freq_ms)
         ms_from_last_decision += freq_ms
 
-    return tasks_plot, active_threads_plot, all_threads_plot, sla_counter
+    return tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter
 
 
 if __name__ == '__main__':
@@ -241,10 +282,14 @@ if __name__ == '__main__':
     engine_id = create_engine(setup_delay_ms, freq_ms, sla_threshold_ms)
     print(f"Engine id: {engine_id}")
 
-    tasks_plot, active_threads_plot, all_threads_plot, sla_counter = run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms)
-    predicted_tasks_plot, task_distribution = get_stats(engine_id)
+    tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter = run_test(tasks_numbers, setup_delay_ms, freq_ms, sla_threshold_ms)
+    predicted_tasks_plot, task_distribution, decision_history = get_stats(engine_id)
 
     sla_counter.do_print()
+    rent_counter.do_print()
+
+    plot_history_dict(decision_history, freq=f"{100000*2}ms")
+    show()
 
     bar(task_distribution["values"], task_distribution["weights"], width=1000)
     show()

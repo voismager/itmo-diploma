@@ -1,15 +1,16 @@
+import datetime
 import math
 import random
 from random import choices
 
+import ciso8601
 import numpy as np
 import pandas as pd
-import ciso8601
 from darts import TimeSeries
-from scipy.optimize import minimize, basinhopping, minimize_scalar
-import datetime
+from scipy.optimize import minimize_scalar
 
-from python.service.main_predictor import MainPredictor
+from main_predictor import MainPredictor
+from decision_history import DecisionHistory
 
 request_example = {
     "active_threads": [
@@ -218,9 +219,8 @@ def __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms):
 
 
 class PredictiveScalingEngine:
-    def __init__(self, engine_id, worker_setup_delay_ms, measurement_frequency_ms, task_length_order, params):
+    def __init__(self, engine_id, worker_setup_delay_ms, delta_ms, measurement_frequency_ms, task_length_order, params):
         self.id = engine_id
-        self.worker_setup_delay_ms = worker_setup_delay_ms
         self.measurement_frequency_ms = measurement_frequency_ms
         self.horizon_steps = __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms)
         self.horizon_steps_with_delta = self.horizon_steps * 2
@@ -228,6 +228,7 @@ class PredictiveScalingEngine:
         self.predictor = MainPredictor(512, self.horizon_steps)
         self.predictor_with_delta = MainPredictor(512, self.horizon_steps * 2)
         self.history = TasksHistory(measurement_frequency_ms, task_length_order)
+        self.decision_history = DecisionHistory(params["max_threads"])
         self.prediction_history = None
         self.params = params
 
@@ -241,15 +242,24 @@ class PredictiveScalingEngine:
             if start_time > end_time:
                 self.prediction_history = self.prediction_history.append(predictions)
 
-    def __calculate_total_cost__(self, total_time_working_ms, task_queue, current_time: datetime.datetime):
+    def __calculate_total_cost__(self, total_time_working_ms, task_queue, assigned_tasks, current_time: datetime.datetime):
         sla_threshold_ms = self.params["sla_threshold_ms"]
         sla_cost_per_ms = self.params["sla_cost_per_ms"]
         rent_cost_per_ms = self.params["rent_cost_per_ms"]
 
         total_cost = total_time_working_ms * rent_cost_per_ms
+
         for task in task_queue:
             arrived_at = task["arrived_at"]
             time_in_queue_ms = (current_time - arrived_at).total_seconds() * 1000
+            if time_in_queue_ms > sla_threshold_ms:
+                diff = time_in_queue_ms - sla_threshold_ms
+                total_cost += (diff * sla_cost_per_ms)
+
+        for task in assigned_tasks:
+            arrived_at = task["arrived_at"]
+            assigned_at = task["assigned_at"]
+            time_in_queue_ms = (assigned_at - arrived_at).total_seconds() * 1000
             if time_in_queue_ms > sla_threshold_ms:
                 diff = time_in_queue_ms - sla_threshold_ms
                 total_cost += (diff * sla_cost_per_ms)
@@ -261,13 +271,16 @@ class PredictiveScalingEngine:
             predictions_with_delta, active_threads, task_queue,
             current_time: datetime.datetime, generator: TaskLengthGenerator) -> float:
 
-        def assign_task_if_possible(task):
+        assigned_tasks = []
+
+        def assign_task_if_possible(task, time):
             nonlocal active_threads
             # Run task on an idle thread if one exists
             idle_thread = next((thr for thr in active_threads if thr["time_left_ms"] == 0), None)
             if idle_thread is not None:
                 idle_thread["time_left_ms"] = task["length_ms"]
-                # todo добавить подсчет sla
+                task["assigned_at"] = time
+                assigned_tasks.append(task)
                 return True
             else:
                 return False
@@ -277,25 +290,25 @@ class PredictiveScalingEngine:
             for tick in range(self.horizon_steps_with_delta):
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
-                # Update threads time
-                for thr in active_threads:
-                    time_left_ms = thr["time_left_ms"]
-                    time_left_ms = max(0, time_left_ms - self.measurement_frequency_ms)
-                    thr["time_left_ms"] = time_left_ms
-
-                # Assign tasks if possible and update queue
-                task_queue = [task for task in task_queue if not assign_task_if_possible(task)]
-
                 # Add predicted number of tasks
                 task_queue = task_queue + [
                     {"length_ms": generator.next_task_length(), "arrived_at": current_time}
                     for _ in range(predictions_with_delta[tick])
                 ]
 
+                # Assign tasks if possible and update queue
+                task_queue = [task for task in task_queue if not assign_task_if_possible(task, current_time)]
+
+                # Update threads time
+                for thr in active_threads:
+                    time_left_ms = thr["time_left_ms"]
+                    time_left_ms = max(0, time_left_ms - self.measurement_frequency_ms)
+                    thr["time_left_ms"] = time_left_ms
+
             # Calculate total threads working time during this period
             total_time_working_ms = len(active_threads) * self.horizon_steps_with_delta * self.measurement_frequency_ms
 
-            return self.__calculate_total_cost__(total_time_working_ms, task_queue, current_time)
+            return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
 
         # What happens if we add some threads
         # New threads are created after delay and billed only after creation
@@ -309,27 +322,27 @@ class PredictiveScalingEngine:
                 if tick == (self.horizon_steps - 1):
                     active_threads = active_threads + [{"time_left_ms": 0} for _ in range(threads_number)]
 
-                # Update threads time
-                for thr in active_threads:
-                    time_left_ms = thr["time_left_ms"]
-                    time_left_ms = max(0, time_left_ms - self.measurement_frequency_ms)
-                    thr["time_left_ms"] = time_left_ms
-
-                # Assign tasks if possible and update queue
-                task_queue = [task for task in task_queue if not assign_task_if_possible(task)]
-
                 # Add predicted number of tasks
                 task_queue = task_queue + [
                     {"length_ms": generator.next_task_length(), "arrived_at": current_time}
                     for _ in range(predictions_with_delta[tick])
                 ]
 
+                # Assign tasks if possible and update queue
+                task_queue = [task for task in task_queue if not assign_task_if_possible(task, current_time)]
+
+                # Update threads time
+                for thr in active_threads:
+                    time_left_ms = thr["time_left_ms"]
+                    time_left_ms = max(0, time_left_ms - self.measurement_frequency_ms)
+                    thr["time_left_ms"] = time_left_ms
+
             # Calculate total threads working time during this period
             old_threads_total_time_working_ms = old_threads_number * self.horizon_steps_with_delta * self.measurement_frequency_ms
             new_threads_total_time_working_ms = threads_number * self.delta * self.measurement_frequency_ms
             total_time_working_ms = old_threads_total_time_working_ms + new_threads_total_time_working_ms
 
-            return self.__calculate_total_cost__(total_time_working_ms, task_queue, current_time)
+            return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
 
         # What happens if we remove some threads
         # Threads are removed instantly if there are no tasks
@@ -350,6 +363,15 @@ class PredictiveScalingEngine:
             for tick in range(self.horizon_steps_with_delta):
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
+                # Add predicted number of tasks
+                task_queue = task_queue + [
+                    {"length_ms": generator.next_task_length(), "arrived_at": current_time}
+                    for _ in range(predictions_with_delta[tick])
+                ]
+
+                # Assign tasks if possible and update queue
+                task_queue = [task for task in task_queue if not assign_task_if_possible(task, current_time)]
+
                 # Update threads time
                 for thr in active_threads:
                     time_left_ms = thr["time_left_ms"]
@@ -362,15 +384,6 @@ class PredictiveScalingEngine:
                 # Delete marked threads if finished
                 active_threads = [thr for thr in active_threads if not thr.get("delete", False) or not thr["time_left_ms"] == 0]
 
-                # Assign tasks if possible and update queue
-                task_queue = [task for task in task_queue if not assign_task_if_possible(task)]
-
-                # Add predicted number of tasks
-                task_queue = task_queue + [
-                    {"length_ms": generator.next_task_length(), "arrived_at": current_time}
-                    for _ in range(predictions_with_delta[tick])
-                ]
-
             total_time_working_ms = 0
             for thr in all_threads:
                 if thr.get("delete", False):
@@ -380,7 +393,7 @@ class PredictiveScalingEngine:
                 else:
                     total_time_working_ms += (self.horizon_steps_with_delta * self.measurement_frequency_ms)
 
-            return self.__calculate_total_cost__(total_time_working_ms, task_queue, current_time)
+            return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
 
     def __get_threads_number__(self, active_threads, predictions_with_delta, current_time: datetime.datetime):
         task_lengths_distribution = self.history.task_lengths_histogram.as_distribution()
@@ -414,7 +427,7 @@ class PredictiveScalingEngine:
             )
 
         optimal_threads = self.__optimize_cost_function__(run_simulation, len(active_threads))
-        print(optimal_threads)
+        self.decision_history.add(optimal_threads, current_time)
         return optimal_threads
 
     def __optimize_cost_function__(self, run_simulation, current_threads):
@@ -423,10 +436,7 @@ class PredictiveScalingEngine:
         if min_cost == 0:
             return 0
         else:
-            max_threads_to_add = self.params["max_threads"] - current_threads
-            max_threads_to_remove = current_threads
-
-            bounds = (-max_threads_to_remove, max_threads_to_add)
+            bounds = self.decision_history.get_boundaries(current_threads)
             results = {0: min_cost}
 
             print(f"Bounds: {bounds}")
@@ -442,85 +452,9 @@ class PredictiveScalingEngine:
                     results[threads] = cost
                     return cost
 
-            result = minimize_scalar(memory_fun, bounds=bounds, method='bounded')
-            return int(result.x)
-
-    def __get_number_of_needed_threads__(self, active_threads, predictions, now: datetime.datetime):
-        # Init some params
-        created_threads = 0
-        min_idle_threads = 1e6
-
-        sla_threshold_ms = self.params["sla_threshold_ms"]
-        max_threads = self.params["max_threads"]
-
-        task_lengths_distribution = self.history.task_lengths_histogram.as_distribution()
-
-        # Setup simulation
-        simulated_threads = []
-        for thread in active_threads:
-            if thread["state"] == "idle":
-                simulated_threads.append({"time_left_ms": 0})
-            elif thread["state"] == "occupied":
-                stripped_distribution = __strip_distribution__(task_lengths_distribution, thread["processing_time_passed_ms"])
-                task_length = __rand_task_time__(stripped_distribution)
-                simulated_threads.append({"time_left_ms": task_length - thread["processing_time_passed_ms"]})
-
-        simulated_tasks_queue = [
-            {"length_ms": __rand_task_time__(task_lengths_distribution), "arrived_at": ciso8601.parse_datetime(task["arrived_at"])}
-            for task in self.history.current_queue.values()
-        ]
-
-        simulated_tasks_queue.sort(key=lambda task: task["arrived_at"])
-
-        def update_task_in_queue(task):
-            nonlocal created_threads, simulated_threads
-
-            arrived_at_ts = task["arrived_at"]
-            delta_ms = int((current_time - arrived_at_ts).total_seconds() * 1000)
-
-            if delta_ms >= sla_threshold_ms:
-                # If task already violates SLA, create a new thread
-                idle_thread = next((thr for thr in simulated_threads if thr["time_left_ms"] == 0), None)
-                if idle_thread is not None:
-                    idle_thread["time_left_ms"] = task["length_ms"]
-                    return True
-                else:
-                    if len(simulated_threads) < max_threads:
-                        simulated_threads.append({"time_left_ms": task["length_ms"]})
-                        created_threads += 1
-                        return True
-                    else:
-                        return False
-            else:
-                # If task doesn't violate SLA, run it on an idle thread if one exists
-                idle_thread = next((thr for thr in simulated_threads if thr["time_left_ms"] == 0), None)
-                if idle_thread is not None:
-                    idle_thread["time_left_ms"] = task["length_ms"]
-                    return True
-                else:
-                    return False
-
-        # Run simulation
-        for tick in range(self.horizon_steps + 1):
-            current_time = now + datetime.timedelta(milliseconds=tick * self.measurement_frequency_ms)
-
-            if tick > 0:
-                for thr in simulated_threads:
-                    time_left_ms = thr["time_left_ms"]
-                    time_left_ms = max(0, time_left_ms - self.measurement_frequency_ms)
-                    thr["time_left_ms"] = time_left_ms
-
-                new_tasks = [
-                    {"length_ms": __rand_task_time__(task_lengths_distribution), "arrived_at": current_time}
-                    for _ in range(predictions[tick - 1])
-                ]
-
-                simulated_tasks_queue = simulated_tasks_queue + new_tasks
-
-            simulated_tasks_queue = [task for task in simulated_tasks_queue if not update_task_in_queue(task)]
-            min_idle_threads = min(min_idle_threads, len([thr for thr in simulated_threads if thr["time_left_ms"] == 0]))
-
-        return created_threads - min_idle_threads
+            result = int(minimize_scalar(memory_fun, bounds=(bounds[0] - 1, bounds[1] + 1), method='bounded').x)
+            print(f"Optimal threads={result}")
+            return result
 
     def get_scaling_decision(self, active_threads, tasks_history, last_timestamp):
         self.history.update(tasks_history, last_timestamp)
@@ -579,6 +513,7 @@ class PredictiveScalingEngine:
         prediction_history = self.prediction_history.pd_series()
 
         return {
+            "decision_history": self.decision_history.to_dict(),
             "task_distribution": {
                 "values": distribution[0],
                 "weights": distribution[1]
@@ -633,3 +568,81 @@ class PredictiveScalingEngine:
 #
 #             for thread in simulated_threads:
 #                 thread["time_left_ms"] -= min_time_left_ms
+
+
+# def __get_number_of_needed_threads__(self, active_threads, predictions, now: datetime.datetime):
+#     # Init some params
+#     created_threads = 0
+#     min_idle_threads = 1e6
+#
+#     sla_threshold_ms = self.params["sla_threshold_ms"]
+#     max_threads = self.params["max_threads"]
+#
+#     task_lengths_distribution = self.history.task_lengths_histogram.as_distribution()
+#
+#     # Setup simulation
+#     simulated_threads = []
+#     for thread in active_threads:
+#         if thread["state"] == "idle":
+#             simulated_threads.append({"time_left_ms": 0})
+#         elif thread["state"] == "occupied":
+#             stripped_distribution = __strip_distribution__(task_lengths_distribution, thread["processing_time_passed_ms"])
+#             task_length = __rand_task_time__(stripped_distribution)
+#             simulated_threads.append({"time_left_ms": task_length - thread["processing_time_passed_ms"]})
+#
+#     simulated_tasks_queue = [
+#         {"length_ms": __rand_task_time__(task_lengths_distribution), "arrived_at": ciso8601.parse_datetime(task["arrived_at"])}
+#         for task in self.history.current_queue.values()
+#     ]
+#
+#     simulated_tasks_queue.sort(key=lambda task: task["arrived_at"])
+#
+#     def update_task_in_queue(task):
+#         nonlocal created_threads, simulated_threads
+#
+#         arrived_at_ts = task["arrived_at"]
+#         delta_ms = int((current_time - arrived_at_ts).total_seconds() * 1000)
+#
+#         if delta_ms >= sla_threshold_ms:
+#             # If task already violates SLA, create a new thread
+#             idle_thread = next((thr for thr in simulated_threads if thr["time_left_ms"] == 0), None)
+#             if idle_thread is not None:
+#                 idle_thread["time_left_ms"] = task["length_ms"]
+#                 return True
+#             else:
+#                 if len(simulated_threads) < max_threads:
+#                     simulated_threads.append({"time_left_ms": task["length_ms"]})
+#                     created_threads += 1
+#                     return True
+#                 else:
+#                     return False
+#         else:
+#             # If task doesn't violate SLA, run it on an idle thread if one exists
+#             idle_thread = next((thr for thr in simulated_threads if thr["time_left_ms"] == 0), None)
+#             if idle_thread is not None:
+#                 idle_thread["time_left_ms"] = task["length_ms"]
+#                 return True
+#             else:
+#                 return False
+#
+#     # Run simulation
+#     for tick in range(self.horizon_steps + 1):
+#         current_time = now + datetime.timedelta(milliseconds=tick * self.measurement_frequency_ms)
+#
+#         if tick > 0:
+#             for thr in simulated_threads:
+#                 time_left_ms = thr["time_left_ms"]
+#                 time_left_ms = max(0, time_left_ms - self.measurement_frequency_ms)
+#                 thr["time_left_ms"] = time_left_ms
+#
+#             new_tasks = [
+#                 {"length_ms": __rand_task_time__(task_lengths_distribution), "arrived_at": current_time}
+#                 for _ in range(predictions[tick - 1])
+#             ]
+#
+#             simulated_tasks_queue = simulated_tasks_queue + new_tasks
+#
+#         simulated_tasks_queue = [task for task in simulated_tasks_queue if not update_task_in_queue(task)]
+#         min_idle_threads = min(min_idle_threads, len([thr for thr in simulated_threads if thr["time_left_ms"] == 0]))
+#
+#     return created_threads - min_idle_threads

@@ -19,7 +19,6 @@ def create_scaling_engine():
 
     return jsonify({
         "id": engine.id,
-        "worker_setup_delay_ms": engine.worker_setup_delay_ms,
         "measurement_frequency_ms": engine.measurement_frequency_ms,
         "task_length_distribution_interval_ms": engine.history.task_lengths_histogram.interval_length,
         "params": engine.params
