@@ -1,11 +1,10 @@
 from sklearn.ensemble import RandomForestRegressor
-import xgboost as xgb
 from keras import Sequential
-from keras.layers import Dense, Input, LSTM
+from keras.layers import Dense, LSTM
 from sklearn.preprocessing import MinMaxScaler
 
 
-from python.predictor import Predictor
+from python.simulation.predictor import Predictor
 
 import numpy as np
 

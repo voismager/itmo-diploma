@@ -1,7 +1,7 @@
 from sktime.forecasting.tbats import TBATS
 import numpy as np
 
-from python.predictor import Predictor
+from python.simulation.predictor import Predictor
 
 
 class TbatsPredictor(Predictor):

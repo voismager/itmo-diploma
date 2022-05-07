@@ -273,18 +273,6 @@ class PredictiveScalingEngine:
 
         assigned_tasks = []
 
-        def assign_task_if_possible(task, time):
-            nonlocal active_threads
-            # Run task on an idle thread if one exists
-            idle_thread = next((thr for thr in active_threads if thr["time_left_ms"] == 0), None)
-            if idle_thread is not None:
-                idle_thread["time_left_ms"] = task["length_ms"]
-                task["assigned_at"] = time
-                assigned_tasks.append(task)
-                return True
-            else:
-                return False
-
         # What happens if we do nothing
         if threads_number == 0:
             for tick in range(self.total_horizon_steps):
@@ -297,7 +285,16 @@ class PredictiveScalingEngine:
                 ]
 
                 # Assign tasks if possible and update queue
-                task_queue = [task for task in task_queue if not assign_task_if_possible(task, current_time)]
+                idle_threads = [thr for thr in active_threads if thr["time_left_ms"] == 0]
+                tasks_to_assign = min(len(idle_threads), len(task_queue))
+                if tasks_to_assign > 0:
+                    for i in range(tasks_to_assign):
+                        idle_thread, task = idle_threads[i], task_queue[i]
+                        idle_thread["time_left_ms"] = task["length_ms"]
+                        task["assigned_at"] = current_time
+                        assigned_tasks.append(task)
+
+                    task_queue = task_queue[tasks_to_assign:]
 
                 # Update threads time
                 for thr in active_threads:
@@ -338,7 +335,16 @@ class PredictiveScalingEngine:
                 ]
 
                 # Assign tasks if possible and update queue
-                task_queue = [task for task in task_queue if not assign_task_if_possible(task, current_time)]
+                idle_threads = [thr for thr in active_threads if thr["time_left_ms"] == 0]
+                tasks_to_assign = min(len(idle_threads), len(task_queue))
+                if tasks_to_assign > 0:
+                    for i in range(tasks_to_assign):
+                        idle_thread, task = idle_threads[i], task_queue[i]
+                        idle_thread["time_left_ms"] = task["length_ms"]
+                        task["assigned_at"] = current_time
+                        assigned_tasks.append(task)
+
+                    task_queue = task_queue[tasks_to_assign:]
 
                 # Update threads time
                 for thr in active_threads:
@@ -379,7 +385,16 @@ class PredictiveScalingEngine:
                 ]
 
                 # Assign tasks if possible and update queue
-                task_queue = [task for task in task_queue if not assign_task_if_possible(task, current_time)]
+                idle_threads = [thr for thr in active_threads if thr["time_left_ms"] == 0]
+                tasks_to_assign = min(len(idle_threads), len(task_queue))
+                if tasks_to_assign > 0:
+                    for i in range(tasks_to_assign):
+                        idle_thread, task = idle_threads[i], task_queue[i]
+                        idle_thread["time_left_ms"] = task["length_ms"]
+                        task["assigned_at"] = current_time
+                        assigned_tasks.append(task)
+
+                    task_queue = task_queue[tasks_to_assign:]
 
                 # Update threads time
                 for thr in active_threads:

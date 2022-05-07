@@ -1,10 +1,6 @@
 import pmdarima as pm
-import numpy as np
-from statsmodels.graphics.tsaplots import plot_acf
-from statsmodels.tsa.arima.model import ARIMA
-from matplotlib.pyplot import plot, show, bar, figure
 
-from python.predictor import Predictor
+from python.simulation.predictor import Predictor
 
 
 class ArimaPredictor(Predictor):

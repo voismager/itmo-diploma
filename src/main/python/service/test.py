@@ -35,7 +35,7 @@ class RentCounter:
             total_rent_ms += delta_ms
 
         print(f"Total rent (s): {total_rent_ms / 1000}")
-        print(f"Total rent cost: {total_rent_ms * self.cost_per_ms}")
+        print(f"Total rent cost (/1000000): {total_rent_ms * self.cost_per_ms / 1000000}")
 
 
 class SLACounter:
@@ -63,7 +63,7 @@ class SLACounter:
         print(f"Max SLA violation time (s): {self.max / 1000}")
         print(f"Min SLA violation time (s): {self.min / 1000}")
         print(f"Average SLA violation time (s): {self.sum / self.count / 1000}")
-        print(f"Total SLA cost: {self.sum * self.cost_per_ms}")
+        print(f"Total SLA cost (/1000000): {self.sum * self.cost_per_ms / 1000000}")
 
 
 class Plot:
@@ -274,9 +274,9 @@ def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms,
 
 
 if __name__ == '__main__':
-    tasks_numbers = load_data("../data.csv")[:5000]
+    tasks_numbers = load_data("../simulation/data.csv")
     setup_delay_ms = 100000
-    delta_ms = 50000
+    delta_ms = 100000
     freq_ms = 2000
     sla_threshold_ms = 200000
     sla_cost = 1000

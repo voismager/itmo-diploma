@@ -4,14 +4,11 @@ import numpy as np
 from matplotlib.pyplot import plot, show, bar, figure
 from scipy.optimize import differential_evolution
 from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.seasonal import STL
-from sktime.transformations.series.detrend import Detrender, Deseasonalizer
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from statsmodels.tsa.stattools import adfuller
+from sktime.transformations.series.detrend import Detrender, Deseasonalizer
 
 from statsmodels.tsa.filters.bk_filter import bkfilter
 from statsmodels.tsa.filters.hp_filter import hpfilter
-from statsmodels.tsa.filters.cf_filter import cffilter
 
 from scipy import fftpack
 from cluster import QueueCluster
@@ -19,16 +16,12 @@ from sim_statistics import Statistics
 from predictor import \
     PrecisePredictor, \
     LastValuePredictor, \
-    SimpleMovingAveragePredictor, \
-    WeighedMovingAveragePredictor, \
-    DoubleExponentialSmoothingPredictor
-from python.predictors.custom_predictor import CustomPredictor, CustomPredictor1, CustomPredictor2
-from python.predictors.nbits_predictor import NbitsPredictor
-from python.predictors.my_predictor import MyPredictor
-from python.predictors.tbats_predictor import TbatsPredictor
-from python.predictors.arima_predictor import ArimaPredictor
-from python.predictors.composite_predictor import CompositePredictor
-from python.predictors.random_forest_predictor import RandomForestPredictor, NeuralPredictor
+    WeighedMovingAveragePredictor
+from predictors.nbits_predictor import NbitsPredictor
+from predictors.my_predictor import MyPredictor
+from predictors.arima_predictor import ArimaPredictor
+from predictors.composite_predictor import CompositePredictor
+from predictors.random_forest_predictor import RandomForestPredictor, NeuralPredictor
 from scaling_decision_maker import ScalingDecisionMaker
 from task import TaskPool
 
@@ -87,8 +80,8 @@ def print_data(input_data):
     # print('ADF critical values:', crit_vals)
     # print('ADF best information criterion:', icbest)
     #
-    # plot_acf(np.asarray(input_data), lags=100)
-    # plot_pacf(np.asarray(input_data), lags=50)
+    plot_acf(np.asarray(input_data), lags=100)
+    plot_pacf(np.asarray(input_data), lags=50)
     show()
 
 
@@ -197,5 +190,5 @@ if __name__ == '__main__':
     data = load_data()
     train = data[0:35000]
     test = data[35000:44000]
-    #print_data(data[10000:12000])
-    run_visuals(train, test)
+    print_data(data)
+    #run_visuals(train, test)
