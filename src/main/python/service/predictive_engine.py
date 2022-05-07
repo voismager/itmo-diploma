@@ -453,17 +453,18 @@ class PredictiveScalingEngine:
 
         optimal_threads = self.__optimize_cost_function__(run_simulation, len(active_threads))
         self.decision_history.add(optimal_threads, current_time)
+        print(f"Optimal threads={optimal_threads}")
         return optimal_threads
 
     def __optimize_cost_function__(self, run_simulation, current_threads):
         cache = SimulationCache()
-        min_cost = run_simulation(0, cache)
+        cost_at_zero = run_simulation(0, cache)
 
-        if min_cost == 0:
+        if cost_at_zero == 0:
             return 0
         else:
             bounds = self.decision_history.get_boundaries(current_threads)
-            results = {0: min_cost}
+            results = {0: cost_at_zero}
 
             print(f"Bounds: {bounds}")
 
@@ -478,9 +479,36 @@ class PredictiveScalingEngine:
                     results[threads] = cost
                     return cost
 
-            result = int(minimize_scalar(memory_fun, bounds=(bounds[0] - 1, bounds[1] + 1), method='bounded').x)
-            print(f"Optimal threads={result}")
-            return result
+            if bounds[0] != 0 and bounds[1] != 0:
+                optimal_upper = int(minimize_scalar(memory_fun, bounds=(0, bounds[1] + 1), method='bounded').x)
+                optimal_lower = int(minimize_scalar(memory_fun, bounds=(bounds[0] - 1, 0), method='bounded').x)
+                cost_at_upper = results[optimal_upper]
+                cost_at_lower = results[optimal_lower]
+                if cost_at_upper < cost_at_lower:
+                    if cost_at_upper < cost_at_zero:
+                        return optimal_upper
+                    else:
+                        return 0
+                else:
+                    if cost_at_lower < cost_at_zero:
+                        return optimal_lower
+                    else:
+                        return 0
+
+            elif bounds[0] != 0:
+                optimal_lower = int(minimize_scalar(memory_fun, bounds=(bounds[0] - 1, 0), method='bounded').x)
+                if results[optimal_lower] < cost_at_zero:
+                    return optimal_lower
+                else:
+                    return 0
+            elif bounds[1] != 0:
+                optimal_upper = int(minimize_scalar(memory_fun, bounds=(0, bounds[1] + 1), method='bounded').x)
+                if results[optimal_upper] < cost_at_zero:
+                    return optimal_upper
+                else:
+                    return 0
+            else:
+                return cost_at_zero
 
     def get_scaling_decision(self, active_threads, tasks_history, last_timestamp):
         self.history.update(tasks_history, last_timestamp)

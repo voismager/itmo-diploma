@@ -274,7 +274,7 @@ def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms,
 
 
 if __name__ == '__main__':
-    tasks_numbers = load_data("../simulation/data.csv")
+    tasks_numbers = load_data("../simulation/data.csv")[:5000]
     setup_delay_ms = 100000
     delta_ms = 100000
     freq_ms = 2000
