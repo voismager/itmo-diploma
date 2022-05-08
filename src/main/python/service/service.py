@@ -26,6 +26,15 @@ def create_scaling_engine():
     })
 
 
+@api.route('/engines/<engine_id>', methods=['DELETE'])
+def delete_scaling_engine(engine_id):
+    engine_id = service.delete_engine(engine_id)
+    return jsonify({
+        "engine_id": engine_id,
+        "success": True
+    })
+
+
 @api.route('/engines/<engine_id>/stats', methods=['GET'])
 def get_stats(engine_id):
     stats = service.get_stats(engine_id)

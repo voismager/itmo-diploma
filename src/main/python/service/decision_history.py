@@ -64,7 +64,7 @@ def plot_history_dict(decision_history_dict, freq):
 class DecisionHistory:
     def __init__(self, max_threads):
         self.max_threads = max_threads
-        self.initial_boundaries = (-max(2, max_threads // (2 ** 5)), max(2, max_threads // (2 ** 5)))
+        self.initial_boundaries = (-max(2, max_threads // (2 ** 3)), max(2, max_threads // (2 ** 3)))
         self.boundaries = self.initial_boundaries
         self.extend_coefficient = 0.9
 

@@ -29,7 +29,7 @@ SLA = 100
 
 
 def load_data():
-    with open("data.csv", "r") as f:
+    with open("validation_data.csv", "r") as f:
         reader = csv.reader(f)
         rows = []
         for line in reader:
@@ -40,7 +40,7 @@ def load_data():
 def print_data(input_data):
     X = list(range(len(input_data)))
 
-    plot(X, input_data, "bo", markersize=1)
+    plot(X, input_data)
     show()
 
     #from sktime.utils.seasonality import autocorrelation_seasonality_test
@@ -80,8 +80,8 @@ def print_data(input_data):
     # print('ADF critical values:', crit_vals)
     # print('ADF best information criterion:', icbest)
     #
-    plot_acf(np.asarray(input_data), lags=100)
-    plot_pacf(np.asarray(input_data), lags=50)
+    #plot_acf(np.asarray(input_data), lags=100)
+    #plot_pacf(np.asarray(input_data), lags=50)
     show()
 
 
@@ -188,7 +188,7 @@ def run_visuals(train_data, test_data):
 
 if __name__ == '__main__':
     data = load_data()
-    train = data[0:35000]
-    test = data[35000:44000]
     print_data(data)
+    #train = data[0:35000]
+    #test = data[35000:44000]
     #run_visuals(train, test)

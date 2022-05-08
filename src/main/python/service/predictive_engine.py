@@ -128,13 +128,21 @@ class TaskLengthGenerator:
     def __init__(self, distribution, seed):
         self.distribution = distribution
         self.random = random.Random(seed)
+        self.cache = []
+        self.curr_cache = 0
 
     def next_task_length(self, low_value=0):
         if low_value > 0:
             stripped_distribution = __strip_distribution__(self.distribution, low_value)
             return choices(stripped_distribution[0], stripped_distribution[1])[0]
         else:
-            return choices(self.distribution[0], self.distribution[1])[0]
+            if self.curr_cache < len(self.cache):
+                self.curr_cache += 1
+                return self.cache[self.curr_cache - 1]
+            else:
+                self.cache = choices(self.distribution[0], self.distribution[1], k=256)
+                self.curr_cache = 1
+                return self.cache[0]
 
 
 class TasksHistory:
@@ -219,6 +227,10 @@ def __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms):
     return math.ceil(worker_setup_delay_ms / measurement_frequency_ms)
 
 
+def __get_quantile__(overestimation_coefficient):
+    return overestimation_coefficient / 4 + 0.5
+
+
 class PredictiveScalingEngine:
     def __init__(self, engine_id, worker_setup_delay_ms, delta_ms, measurement_frequency_ms, task_length_order, params):
         self.id = engine_id
@@ -226,11 +238,17 @@ class PredictiveScalingEngine:
         self.setup_horizon_steps = __get_horizon_steps__(worker_setup_delay_ms, measurement_frequency_ms)
         self.delta_horizon_steps = __get_horizon_steps__(delta_ms, measurement_frequency_ms)
         self.total_horizon_steps = self.setup_horizon_steps + self.delta_horizon_steps
-        self.predictor = MainPredictor(512, self.total_horizon_steps)
         self.history = TasksHistory(measurement_frequency_ms, task_length_order)
         self.decision_history = DecisionHistory(params["max_threads"])
         self.prediction_history = None
         self.params = params
+
+        self.predictor = MainPredictor(
+            self.total_horizon_steps,
+            __get_quantile__(params["overestimation_coefficient"]),
+            measurement_frequency_ms,
+            params["seasonality"]
+        )
 
     def __update_prediction_history__(self, predictions: TimeSeries):
         if self.prediction_history is None:
@@ -242,12 +260,18 @@ class PredictiveScalingEngine:
             if start_time > end_time:
                 self.prediction_history = self.prediction_history.append(predictions)
 
-    def __calculate_total_cost__(self, total_time_working_ms, task_queue, assigned_tasks, current_time: datetime.datetime):
+    def __calculate_total_cost__(self, threads, total_time_working_ms, task_queue, assigned_tasks, current_time: datetime.datetime):
         sla_threshold_ms = self.params["sla_threshold_ms"]
         sla_cost_per_ms = self.params["sla_cost_per_ms"]
         rent_cost_per_ms = self.params["rent_cost_per_ms"]
+        cost_per_scaling_decision = self.params["cost_per_scaling_decision"]
 
         total_cost = total_time_working_ms * rent_cost_per_ms
+
+        if threads > 0:
+            total_cost += (cost_per_scaling_decision * threads)
+        elif threads < 0:
+            total_cost += (cost_per_scaling_decision * (-threads))
 
         for task in task_queue:
             arrived_at = task["arrived_at"]
@@ -305,7 +329,7 @@ class PredictiveScalingEngine:
             # Calculate total threads working time during this period
             total_time_working_ms = len(active_threads) * self.total_horizon_steps * self.measurement_frequency_ms
 
-            return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
+            return self.__calculate_total_cost__(threads_number, total_time_working_ms, task_queue, assigned_tasks, current_time)
 
         # What happens if we add some threads
         # New threads are created after delay and billed only after creation
@@ -357,7 +381,7 @@ class PredictiveScalingEngine:
             new_threads_total_time_working_ms = threads_number * self.delta_horizon_steps * self.measurement_frequency_ms
             total_time_working_ms = old_threads_total_time_working_ms + new_threads_total_time_working_ms
 
-            return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
+            return self.__calculate_total_cost__(threads_number, total_time_working_ms, task_queue, assigned_tasks, current_time)
 
         # What happens if we remove some threads
         # Threads are removed instantly if there are no tasks
@@ -417,7 +441,7 @@ class PredictiveScalingEngine:
                 else:
                     total_time_working_ms += (self.total_horizon_steps * self.measurement_frequency_ms)
 
-            return self.__calculate_total_cost__(total_time_working_ms, task_queue, assigned_tasks, current_time)
+            return self.__calculate_total_cost__(threads_number, total_time_working_ms, task_queue, assigned_tasks, current_time)
 
     def __get_threads_number__(self, active_threads, predictions_with_delta, current_time: datetime.datetime):
         task_lengths_distribution = self.history.task_lengths_histogram.as_distribution()
@@ -451,6 +475,7 @@ class PredictiveScalingEngine:
                 cache=cache
             )
 
+        print(f"Queue size={len(simulated_tasks_queue)}")
         optimal_threads = self.__optimize_cost_function__(run_simulation, len(active_threads))
         self.decision_history.add(optimal_threads, current_time)
         print(f"Optimal threads={optimal_threads}")

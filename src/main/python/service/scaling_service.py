@@ -16,6 +16,8 @@ class ScalingService:
                 "sla_threshold_ms": 10000,
                 "sla_cost_per_ms": 1,
                 "rent_cost_per_ms": 1,
+                "cost_per_scaling_decision": 1,
+                "overestimation_coefficient": 0,
                 "max_threads": 3000
             }
         )
@@ -36,6 +38,15 @@ class ScalingService:
         )
         self.engines[engine_id] = engine
         return engine
+
+    def delete_engine(self, engine_id):
+        if engine_id not in self.engines:
+            raise KeyError("Engine with specified id is not found!")
+
+        engine = self.engines.pop(engine_id)
+        del engine
+        print(f"Deleted {engine_id} engine")
+        return engine_id
 
     def get_scaling_decision(self, engine_id, active_threads, tasks_history, last_timestamp):
         engine = self.engines.get(engine_id)
