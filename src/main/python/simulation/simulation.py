@@ -29,7 +29,7 @@ SLA = 100
 
 
 def load_data():
-    with open("validation_data.csv", "r") as f:
+    with open("data.csv", "r") as f:
         reader = csv.reader(f)
         rows = []
         for line in reader:
