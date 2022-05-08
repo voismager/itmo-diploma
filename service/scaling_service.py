@@ -19,6 +19,7 @@ class ScalingService:
                 "cost_per_scaling_decision": 1,
                 "overestimation_coefficient": 0,
                 "max_threads": 3000,
+                "initial_max_step_threads": 100,
                 "seasonality": "none"
             }
         )

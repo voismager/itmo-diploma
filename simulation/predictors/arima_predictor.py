@@ -1,6 +1,6 @@
 import pmdarima as pm
 
-from python.simulation.predictor import Predictor
+from simulation.predictor import Predictor
 
 
 class ArimaPredictor(Predictor):

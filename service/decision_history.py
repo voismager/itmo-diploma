@@ -47,7 +47,7 @@ def plot_history(decision_history, freq):
 
 
 def plot_history_dict(decision_history_dict, freq):
-    decision_history = DecisionHistory(0)
+    decision_history = DecisionHistory(0, 1)
     decision_history.times = [ciso8601.parse_datetime(t) for t in decision_history_dict["times"]]
     decision_history.threads_history = decision_history_dict["threads_delta_history"]
     decision_history.boundaries_history = [
@@ -62,9 +62,9 @@ def plot_history_dict(decision_history_dict, freq):
 
 
 class DecisionHistory:
-    def __init__(self, max_threads):
+    def __init__(self, max_threads, initial_max_step_threads):
         self.max_threads = max_threads
-        self.initial_boundaries = (-max(2, max_threads // (2 ** 3)), max(2, max_threads // (2 ** 3)))
+        self.initial_boundaries = (-initial_max_step_threads, initial_max_step_threads)
         self.boundaries = self.initial_boundaries
         self.extend_coefficient = 0.9
 
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     current_time = datetime.datetime.now()
     current_threads = 0
 
-    history = DecisionHistory(3000)
+    history = DecisionHistory(3000, 100)
 
     for _ in range(20):
         current_time += datetime.timedelta(milliseconds=2000)

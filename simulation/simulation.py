@@ -1,27 +1,14 @@
 import csv
 
-import numpy as np
 from matplotlib.pyplot import plot, show, bar, figure
 from scipy.optimize import differential_evolution
-from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from sktime.transformations.series.detrend import Detrender, Deseasonalizer
 
-from statsmodels.tsa.filters.bk_filter import bkfilter
-from statsmodels.tsa.filters.hp_filter import hpfilter
-
-from scipy import fftpack
 from cluster import QueueCluster
 from sim_statistics import Statistics
 from predictor import \
     PrecisePredictor, \
-    LastValuePredictor, \
     WeighedMovingAveragePredictor
-from predictors.nbits_predictor import NbitsPredictor
-from predictors.my_predictor import MyPredictor
-from predictors.arima_predictor import ArimaPredictor
-from predictors.composite_predictor import CompositePredictor
-from predictors.random_forest_predictor import RandomForestPredictor, NeuralPredictor
+from simulation.predictors.my_predictor import MyPredictor
 from scaling_decision_maker import ScalingDecisionMaker
 from task import TaskPool
 

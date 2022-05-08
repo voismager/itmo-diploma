@@ -1,16 +1,15 @@
 import csv
 import datetime
-import random
 import uuid
-import ciso8601
 
+import ciso8601
+import darts
+import numpy as np
 import pandas as pd
 import requests
-import numpy as np
-import darts
+from matplotlib.pyplot import show, bar
 
 from decision_history import plot_history_dict
-from matplotlib.pyplot import plot, show, bar, figure, hist
 
 base_url = "http://127.0.0.1:5000"
 
@@ -140,7 +139,7 @@ def get_scaling_decision(engine_id, threads, history, current_time):
 
 
 def random_task_length():
-    x = np.random.normal(loc=4000, scale=1500)
+    x = np.random.normal(loc=40000, scale=3000)
     if x < 0:
         return random_task_length()
     else:
@@ -164,6 +163,7 @@ def create_engine(delay, delta, freq, sla, sla_cost, cost_per_scaling_decision, 
             "cost_per_scaling_decision": cost_per_scaling_decision,
             "overestimation_coefficient": 0,
             "max_threads": 30000,
+            "initial_max_step_threads": 300,
             "seasonality": "daily"
         }
     })

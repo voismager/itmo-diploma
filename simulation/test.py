@@ -1,10 +1,6 @@
-import pandas as pd
 import numpy as np
-from sktime.transformations.series.difference import Differencer
 
-from python.simulation import load_data
-from scipy.signal import savgol_filter
-from matplotlib.pyplot import plot, show, bar, figure
+from matplotlib.pyplot import plot, show
 
 
 def __convert_to_matrix__(arr, look_back):

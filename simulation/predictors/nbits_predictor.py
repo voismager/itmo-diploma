@@ -1,7 +1,7 @@
 import numpy as np
 from nbeats_keras.model import NBeatsNet as NBeatsKeras
 
-from python.simulation.predictor import Predictor
+from simulation.predictor import Predictor
 
 
 def __unison_shuffled_copies__(a, b):

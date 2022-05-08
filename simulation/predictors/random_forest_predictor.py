@@ -4,7 +4,7 @@ from keras.layers import Dense, LSTM
 from sklearn.preprocessing import MinMaxScaler
 
 
-from python.simulation.predictor import Predictor
+from simulation.predictor import Predictor
 
 import numpy as np
 

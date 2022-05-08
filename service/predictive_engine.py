@@ -239,7 +239,7 @@ class PredictiveScalingEngine:
         self.delta_horizon_steps = __get_horizon_steps__(delta_ms, measurement_frequency_ms)
         self.total_horizon_steps = self.setup_horizon_steps + self.delta_horizon_steps
         self.history = TasksHistory(measurement_frequency_ms, task_length_order)
-        self.decision_history = DecisionHistory(params["max_threads"])
+        self.decision_history = DecisionHistory(params["max_threads"], params["initial_max_step_threads"])
         self.prediction_history = None
         self.params = params
 

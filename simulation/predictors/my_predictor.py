@@ -3,7 +3,7 @@ from darts import TimeSeries
 from darts.models import FourTheta
 from darts.utils.utils import SeasonalityMode
 
-from python.simulation.predictor import Predictor
+from simulation.predictor import Predictor
 
 
 def load_data():

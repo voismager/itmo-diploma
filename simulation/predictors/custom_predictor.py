@@ -4,11 +4,11 @@ from sktime.forecasting.arima import ARIMA
 from sktime.forecasting.compose import ForecastingPipeline, RecursiveTimeSeriesRegressionForecaster
 from sktime.transformations.series.difference import Differencer
 
-from python.simulation.deseasonalizer import CustomDeseasonalizer
+from simulation.deseasonalizer import CustomDeseasonalizer
 
 from sktime_dl.deeplearning import SimpleRNNRegressor
 
-from python.simulation.predictor import Predictor
+from simulation.predictor import Predictor
 
 
 class CustomPredictor(Predictor):

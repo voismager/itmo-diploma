@@ -1,4 +1,4 @@
-from python.simulation.predictor import Predictor
+from simulation.predictor import Predictor
 
 
 def sign(number):
