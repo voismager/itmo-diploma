@@ -23,16 +23,13 @@ class MainPredictor:
             self.seasonality = None
             self.window = 512
 
-        print(self.window)
-        print(self.seasonality)
-
     def __predict_naive__(self, history):
         model = NaiveSeasonal(K=1)
         model.fit(history)
         return model.predict(self.horizon), "Using last value"
 
     def predict(self, history: darts.TimeSeries):
-        if len(history) < self.seasonality:
+        if len(history) < self.window // 2:
             return self.__predict_naive__(history)
         else:
             window = history[-self.window:]
@@ -43,17 +40,24 @@ class MainPredictor:
             if np.isclose(mean, 0) or var < 8:
                 return self.__predict_naive__(window)
             else:
-                deseasonalizer = ConditionalDeseasonalizer(sp=self.seasonality)
-                pd_transformed_window = darts.TimeSeries.from_series(deseasonalizer.fit_transform(pd_window))
+                if self.seasonality is None:
+                    model = ARIMA(4, 0, 1)
+                    model.fit(window)
+                    predictions = model.predict(self.horizon, num_samples=50)
+                    quantile = predictions.quantile_timeseries(self.quantile)
+                    return quantile, "Using ARIMA"
+                else:
+                    deseasonalizer = ConditionalDeseasonalizer(sp=self.seasonality)
+                    pd_transformed_window = darts.TimeSeries.from_series(deseasonalizer.fit_transform(pd_window))
 
-                model = ARIMA(4, 0, 1)
-                model.fit(pd_transformed_window[-min(self.window - self.seasonality, 512):])
-                predictions = model.predict(self.horizon, num_samples=50)
+                    model = ARIMA(4, 0, 1)
+                    model.fit(pd_transformed_window[-min(self.window - self.seasonality, 512):])
+                    predictions = model.predict(self.horizon, num_samples=50)
 
-                quantile = predictions.quantile_timeseries(self.quantile)
-                transformed = darts.TimeSeries.from_series(deseasonalizer.inverse_transform(quantile.pd_series()))
+                    quantile = predictions.quantile_timeseries(self.quantile)
+                    transformed = darts.TimeSeries.from_series(deseasonalizer.inverse_transform(quantile.pd_series()))
 
-                return transformed, "Using ARIMA"
+                    return transformed, "Using ARIMA with seasonality"
 
 
 

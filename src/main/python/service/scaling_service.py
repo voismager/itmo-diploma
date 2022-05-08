@@ -18,7 +18,8 @@ class ScalingService:
                 "rent_cost_per_ms": 1,
                 "cost_per_scaling_decision": 1,
                 "overestimation_coefficient": 0,
-                "max_threads": 3000
+                "max_threads": 3000,
+                "seasonality": "none"
             }
         )
 
