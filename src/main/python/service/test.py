@@ -43,7 +43,6 @@ class SLACounter:
         self.threshold_ms = threshold_ms
         self.cost_per_ms = cost_per_ms
         self.sum = 0
-        self.min = 1e10
         self.max = 0
         self.count = 0
 
@@ -55,13 +54,11 @@ class SLACounter:
         if delta_ms > self.threshold_ms:
             self.sum += (delta_ms - self.threshold_ms)
             self.max = max((delta_ms - self.threshold_ms), self.max)
-            self.min = min((delta_ms - self.threshold_ms), self.min)
 
         self.count += 1
 
     def do_print(self):
         print(f"Max SLA violation time (s): {self.max / 1000}")
-        print(f"Min SLA violation time (s): {self.min / 1000}")
         print(f"Average SLA violation time (s): {self.sum / self.count / 1000}")
         print(f"Total SLA cost (/1000000): {self.sum * self.cost_per_ms / 1000000}")
 
@@ -154,7 +151,7 @@ def random_id():
     return str(uuid.uuid4())
 
 
-def create_engine(delay, delta, freq, sla, sla_cost):
+def create_engine(delay, delta, freq, sla, sla_cost, cost_per_scaling_decision, rent_cost_per_ms):
     response = requests.post(base_url + "/engines", json={
         "worker_setup_delay_ms": delay,
         "delta_ms": delta,
@@ -163,15 +160,23 @@ def create_engine(delay, delta, freq, sla, sla_cost):
         "params": {
             "sla_threshold_ms": sla,
             "sla_cost_per_ms": sla_cost,
-            "rent_cost_per_ms": 1,
-            "max_threads": 3000
+            "rent_cost_per_ms": rent_cost_per_ms,
+            "cost_per_scaling_decision": cost_per_scaling_decision,
+            "overestimation_coefficient": 0,
+            "max_threads": 30000,
+            "seasonality": "daily"
         }
     })
 
     return response.json()["id"]
 
 
-def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost):
+def delete_engine(engine_id):
+    response = requests.delete(base_url + "/engines/" + engine_id)
+    return response.json()["success"]
+
+
+def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost, rent_cost_per_ms):
     ms_from_last_decision = 0
 
     decision_period_ms = setup_delay_ms + delta_ms
@@ -185,7 +190,7 @@ def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms,
     all_threads_plot = Plot("All Threads")
     active_threads_plot = Plot("Active Threads")
     sla_counter = SLACounter(sla_threshold_ms, sla_cost)
-    rent_counter = RentCounter(1)
+    rent_counter = RentCounter(rent_cost_per_ms)
 
     for _ in range(100):
         thread = {"time_left_ms": 0, "task_id": None, "active": True, "id": random_id()}
@@ -274,21 +279,26 @@ def run_test(tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms,
 
 
 if __name__ == '__main__':
-    tasks_numbers = load_data("../simulation/data.csv")[:5000]
-    setup_delay_ms = 100000
-    delta_ms = 100000
-    freq_ms = 2000
-    sla_threshold_ms = 200000
-    sla_cost = 1000
+    tasks_numbers = load_data("../validation_data/validation_data.csv")
+    setup_delay_ms = 1500000
+    delta_ms = 1500000
+    freq_ms = 30000
+    sla_threshold_ms = 750000
 
-    engine_id = create_engine(setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost)
+    rent_cost_per_ms = 1
+    sla_cost = 30000
+    cost_per_scaling_decision = 1
+
+    engine_id = create_engine(setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost, cost_per_scaling_decision, rent_cost_per_ms)
     print(f"Engine id: {engine_id}")
 
     tasks_plot, active_threads_plot, all_threads_plot, sla_counter, rent_counter = run_test(
-        tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost
+        tasks_numbers, setup_delay_ms, delta_ms, freq_ms, sla_threshold_ms, sla_cost, rent_cost_per_ms
     )
 
     predicted_tasks_plot, task_distribution, decision_history = get_stats(engine_id)
+
+    delete_engine(engine_id)
 
     sla_counter.do_print()
     rent_counter.do_print()
