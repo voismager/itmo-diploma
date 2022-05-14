@@ -1,12 +1,7 @@
-import datetime
-
 import darts
 import numpy as np
 import pandas as pd
-from darts.models import NaiveSeasonal, ARIMA
-from matplotlib.pyplot import show
-from sklearn.metrics import r2_score, mean_absolute_error
-from sktime.transformations.series.detrend import ConditionalDeseasonalizer
+from darts.models import NaiveSeasonal, ARIMA, FFT
 
 
 class MainPredictor:
@@ -41,75 +36,20 @@ class MainPredictor:
                 return self.__predict_naive__(window)
             else:
                 if self.seasonality is None:
-                    model = ARIMA(4, 0, 1)
+                    model = ARIMA(3, 1, 1)
                     model.fit(window)
                     predictions = model.predict(self.horizon, num_samples=50)
                     quantile = predictions.quantile_timeseries(self.quantile)
                     return quantile, "Using ARIMA"
                 else:
-                    deseasonalizer = ConditionalDeseasonalizer(sp=self.seasonality)
-                    pd_transformed_window = darts.TimeSeries.from_series(deseasonalizer.fit_transform(pd_window))
+                    fft_model = FFT(nr_freqs_to_keep=4)
+                    fft_model.fit(window)
 
-                    model = ARIMA(4, 0, 1)
-                    model.fit(pd_transformed_window[-min(self.window - self.seasonality, 512):])
-                    predictions = model.predict(self.horizon, num_samples=50)
+                    seasonal_ts = np.array([fft_model.predicted_values[i % len(fft_model.predicted_values)] for i in range(-len(window), 0)])
+                    seasonal_ts = darts.TimeSeries.from_series(pd.Series(data=seasonal_ts, index=window.time_index))
+                    seasonal_pred_ts = fft_model.predict(self.horizon)
 
-                    quantile = predictions.quantile_timeseries(self.quantile)
-                    transformed = darts.TimeSeries.from_series(deseasonalizer.inverse_transform(quantile.pd_series()))
-
-                    return transformed, "Using ARIMA with seasonality"
-
-
-
-
-def load_data(path):
-    import csv
-    with open(path, "r") as f:
-        reader = csv.reader(f)
-        rows = []
-        for line in reader:
-            rows.append(int(line[0]))
-
-        return rows
-
-
-if __name__ == '__main__':
-    tasks_numbers = load_data("../simulation/validation_data.csv")
-    predictor = MainPredictor(100, 0.5, 30000, 'daily')
-    history = []
-    index = []
-
-    current = datetime.datetime.now()
-    pred = None
-
-    for i in range(len(tasks_numbers)):
-        current += datetime.timedelta(seconds=1)
-
-        history.append(tasks_numbers[i])
-        index.append(current)
-
-        if i % 100 == 0 and i > 1024:
-            pd_history = darts.TimeSeries.from_series(pd.Series(data=history, index=pd.DatetimeIndex(index)))
-            print("Start")
-            prediction = predictor.predict(pd_history)[0]
-            print("Stop")
-
-            if pred is None:
-                pred = prediction
-            else:
-                pred = pred.append(prediction)
-
-    actual = darts.TimeSeries.from_series(pd.Series(data=history, index=pd.DatetimeIndex(index), name="Actual"))
-
-    actual.plot()
-    pred.plot()
-    show()
-
-    actual.plot()
-    show()
-
-    pred.plot()
-    show()
-
-    print(r2_score(actual.pd_series()[-(12500 - 5760):], pred.pd_series()[5760:]))
-    print(mean_absolute_error(actual.pd_series()[-(12500 - 5760):], pred.pd_series()[5760:]))
+                    arima_window_size = min(self.window - self.seasonality, 512)
+                    model = ARIMA(3, 1, 1)
+                    model.fit(window[-arima_window_size:], future_covariates=seasonal_ts[-arima_window_size:])
+                    return model.predict(self.horizon, future_covariates=seasonal_pred_ts), "Using ARIMA with seasonality"

@@ -4,10 +4,12 @@ import random
 from random import choices
 
 import ciso8601
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from darts import TimeSeries
 from scipy.optimize import minimize_scalar
+from gekko import GEKKO
 
 from main_predictor import MainPredictor
 from decision_history import DecisionHistory
@@ -128,21 +130,13 @@ class TaskLengthGenerator:
     def __init__(self, distribution, seed):
         self.distribution = distribution
         self.random = random.Random(seed)
-        self.cache = []
-        self.curr_cache = 0
 
     def next_task_length(self, low_value=0):
         if low_value > 0:
             stripped_distribution = __strip_distribution__(self.distribution, low_value)
             return choices(stripped_distribution[0], stripped_distribution[1])[0]
         else:
-            if self.curr_cache < len(self.cache):
-                self.curr_cache += 1
-                return self.cache[self.curr_cache - 1]
-            else:
-                self.cache = choices(self.distribution[0], self.distribution[1], k=256)
-                self.curr_cache = 1
-                return self.cache[0]
+            return choices(self.distribution[0], self.distribution[1], k=1)[0]
 
 
 class TasksHistory:
@@ -293,7 +287,7 @@ class PredictiveScalingEngine:
     def __calculate_local_future_cost__(
             self, threads_number,
             predictions_with_delta, active_threads, task_queue,
-            current_time: datetime.datetime, generator: TaskLengthGenerator, cache: SimulationCache) -> float:
+            current_time: datetime.datetime, task_lengths):
 
         assigned_tasks = []
 
@@ -304,7 +298,7 @@ class PredictiveScalingEngine:
 
                 # Add predicted number of tasks
                 task_queue = task_queue + [
-                    {"length_ms": generator.next_task_length(), "arrived_at": current_time}
+                    {"length_ms": next(task_lengths), "arrived_at": current_time}
                     for _ in range(predictions_with_delta[tick])
                 ]
 
@@ -336,25 +330,16 @@ class PredictiveScalingEngine:
         elif threads_number > 0:
             old_threads_number = len(active_threads)
 
-            if cache.empty():
-                tick_range = range(self.total_horizon_steps)
-            else:
-                tick_range = range(self.setup_horizon_steps - 1, self.total_horizon_steps)
-                active_threads, task_queue = cache.get()
-
-            for tick in tick_range:
+            for tick in range(self.total_horizon_steps):
                 current_time += datetime.timedelta(milliseconds=self.measurement_frequency_ms)
 
                 # When delay passes, add new threads
                 if tick == (self.setup_horizon_steps - 1):
-                    if cache.empty():
-                        cache.put(active_threads, task_queue)
-
                     active_threads = active_threads + [{"time_left_ms": 0} for _ in range(threads_number)]
 
                 # Add predicted number of tasks
                 task_queue = task_queue + [
-                    {"length_ms": generator.next_task_length(), "arrived_at": current_time}
+                    {"length_ms": next(task_lengths), "arrived_at": current_time}
                     for _ in range(predictions_with_delta[tick])
                 ]
 
@@ -404,7 +389,7 @@ class PredictiveScalingEngine:
 
                 # Add predicted number of tasks
                 task_queue = task_queue + [
-                    {"length_ms": generator.next_task_length(), "arrived_at": current_time}
+                    {"length_ms": next(task_lengths), "arrived_at": current_time}
                     for _ in range(predictions_with_delta[tick])
                 ]
 
@@ -461,18 +446,20 @@ class PredictiveScalingEngine:
             for task in self.history.current_queue.values()
         ], key=lambda task: task["arrived_at"])
 
-        def run_simulation(threads, cache):
-            nonlocal simulated_threads, simulated_tasks_queue, predictions_with_delta, current_time, task_lengths_distribution
+        task_lengths = [length_generator.next_task_length() for _ in range(sum(predictions_with_delta))]
+
+        def run_simulation(threads):
+            nonlocal simulated_threads, simulated_tasks_queue, predictions_with_delta, current_time, task_lengths
             simulated_threads_copy = [dict(thr) for thr in simulated_threads]
             simulated_tasks_queue_copy = [dict(task) for task in simulated_tasks_queue]
+
             return self.__calculate_local_future_cost__(
                 threads_number=threads,
                 predictions_with_delta=predictions_with_delta,
                 active_threads=simulated_threads_copy,
                 task_queue=simulated_tasks_queue_copy,
                 current_time=current_time,
-                generator=TaskLengthGenerator(task_lengths_distribution, 1),
-                cache=cache
+                task_lengths=iter(task_lengths)
             )
 
         print(f"Queue size={len(simulated_tasks_queue)}")
@@ -482,8 +469,7 @@ class PredictiveScalingEngine:
         return optimal_threads
 
     def __optimize_cost_function__(self, run_simulation, current_threads):
-        cache = SimulationCache()
-        cost_at_zero = run_simulation(0, cache)
+        cost_at_zero = run_simulation(0)
 
         if cost_at_zero == 0:
             return 0
@@ -499,41 +485,22 @@ class PredictiveScalingEngine:
                 if threads in results:
                     return results[threads]
                 else:
-                    cost = run_simulation(threads, cache)
+                    cost = run_simulation(threads)
                     print(f"Threads={threads}, Cost={cost}")
                     results[threads] = cost
                     return cost
 
-            if bounds[0] != 0 and bounds[1] != 0:
-                optimal_upper = int(minimize_scalar(memory_fun, bounds=(0, bounds[1] + 1), method='bounded').x)
-                optimal_lower = int(minimize_scalar(memory_fun, bounds=(bounds[0] - 1, 0), method='bounded').x)
-                cost_at_upper = results[optimal_upper]
-                cost_at_lower = results[optimal_lower]
-                if cost_at_upper < cost_at_lower:
-                    if cost_at_upper < cost_at_zero:
-                        return optimal_upper
-                    else:
-                        return 0
-                else:
-                    if cost_at_lower < cost_at_zero:
-                        return optimal_lower
-                    else:
-                        return 0
+            # for i in range(bounds[0], bounds[1] + 1):
+            #     memory_fun(i)
+            #
+            # items = sorted(results.items(), key=lambda it: it[0])
+            # plt.plot([it[0] for it in items], [it[1] for it in items])
+            # plt.xlabel("Number of threads")
+            # plt.ylabel("Total Costs")
+            # plt.show()
 
-            elif bounds[0] != 0:
-                optimal_lower = int(minimize_scalar(memory_fun, bounds=(bounds[0] - 1, 0), method='bounded').x)
-                if results[optimal_lower] < cost_at_zero:
-                    return optimal_lower
-                else:
-                    return 0
-            elif bounds[1] != 0:
-                optimal_upper = int(minimize_scalar(memory_fun, bounds=(0, bounds[1] + 1), method='bounded').x)
-                if results[optimal_upper] < cost_at_zero:
-                    return optimal_upper
-                else:
-                    return 0
-            else:
-                return cost_at_zero
+            optimal = minimize_scalar(memory_fun, bounds=(bounds[0] - 1, bounds[1] + 1), method='bounded').x
+            return int(optimal)
 
     def get_scaling_decision(self, active_threads, tasks_history, last_timestamp):
         self.history.update(tasks_history, last_timestamp)
