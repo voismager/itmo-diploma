@@ -1,0 +1,7 @@
+numpy
+pandas
+ciso8601
+matplotlib
+Flask
+darts
+scipy
