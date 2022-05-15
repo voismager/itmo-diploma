@@ -57,4 +57,4 @@ def get_scaling_decision(engine_id):
 
 
 if __name__ == '__main__':
-    api.run()
+    api.run(debug=False, host='0.0.0.0')
